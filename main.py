@@ -117,5 +117,7 @@ There are very few weight updates over the whole course of my training.
 2. Figure out why episodes are so slow.
 Intuitively, I'd guess you should be able to do thousands of episodes per second
 
+ok nvm it's actually working fine after reward shaping
+
 """
 
