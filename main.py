@@ -27,7 +27,7 @@ import matplotlib.pyplot as plt
 from deps import *
 
 # Initialize a list to store loss values
-losses = []
+rewards = []
 plt.ion()
 fig, ax = plt.subplots()
 ax.set_xlabel("Episode")
@@ -49,7 +49,7 @@ if __name__ == '__main__':
     # Create a directory to save checkpoints if it doesn't exist
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    env = GridWorldEnv(max_steps=100)
+    env = GridWorldEnv(max_steps=80)
     agent = DQNAgent()
     
     for episode in range(num_episodes):
@@ -57,6 +57,7 @@ if __name__ == '__main__':
         total_reward = 0
         done = False
         
+        __import__('ipdb').set_trace()
         while not done:
             action = agent.select_action(state)
             next_state, reward, done, _ = env.step(action)
@@ -68,10 +69,8 @@ if __name__ == '__main__':
             
             # Update the agent (learn from random mini-batch)
             loss = agent.update()
-            if loss:
-                losses.append(loss.detach().numpy())
         
-        agent.decay_epsilon()
+        agent.set_epsilon(episode, num_episodes)
         print(f"Episode {episode+1}, Total Reward: {total_reward}, Epsilon: {agent.epsilon:.3f}")
 
         if (episode + 1) % save_every == 0:
@@ -84,16 +83,24 @@ if __name__ == '__main__':
             }, checkpoint_path)
             print(f"Checkpoint saved at episode {episode+1}")
 
-        if (episode + 1) % 5 == 0:
-            chunk_size = 100
-            n_chunks = len(losses) // chunk_size
-            averaged_losses = [np.mean(losses[i*chunk_size:(i+1)*chunk_size]) for i in range(n_chunks)]
-            ax.clear()  # Clear the current plot
-            ax.plot(averaged_losses, marker='o', color='b')  # Plot up to the current episode
+        if (episode + 1) % 20 == 0:
+            agent.zero_epsilon()
+            env.reset()
+            total_reward = 0
+            while True:
+                action = agent.select_action(state)
+                _, reward, done, _ = env.step(action)
+                total_reward += reward
+                if done:
+                    break
+            rewards.append(total_reward)
+
+            ax.clear()
+            ax.plot(rewards, marker='o', color='b')
             ax.set_xlabel("Episode")
-            ax.set_ylabel("Loss")
-            plt.draw()  # Update the figure
-            plt.pause(0.25)  # Pause to allow for the plot to update
+            ax.set_ylabel("Reward")
+            plt.draw()
+            plt.pause(0.2)
     
     # Optionally, test the trained agent
     state = env.reset()
@@ -104,20 +111,6 @@ if __name__ == '__main__':
         state, reward, done, _ = env.step(action)
         env.render()
 
+    plt.show()
 
-plt.show()
-
-"""
-Hypothesis about why this is not working:
-
-It's super slow. 
-There are very few weight updates over the whole course of my training. 
-
-1. Figure out how many weight updates happen.
-2. Figure out why episodes are so slow.
-Intuitively, I'd guess you should be able to do thousands of episodes per second
-
-ok nvm it's actually working fine after reward shaping
-
-"""
 

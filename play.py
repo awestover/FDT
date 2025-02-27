@@ -36,19 +36,21 @@ def create_movie(env, agent, ax, movie_filename='agent_journey.mp4'):
 
 def play_agent(env, agent, ax):
     state = env.reset()
-    while True:
+    for i in range(50):
         action = agent.select_action(state)
         next_state, reward, done, _ = env.step(action)
         state = next_state
         if done:
             break
+        ax.clear()
         ax.imshow(state)
+        ax.set_title(f"Step {i}")
         plt.pause(0.01)
 
 if __name__ == '__main__':
     env = GridWorldEnv(max_steps=100)
     agent = DQNAgent()
-    checkpoint_path = 'checkpoints/checkpoint_500.pth'
+    checkpoint_path = 'checkpoints/checkpoint_100.pth'
     checkpoint = torch.load(checkpoint_path, weights_only=True)
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
     agent.epsilon = 0
@@ -60,9 +62,9 @@ if __name__ == '__main__':
     ax.set_xticklabels([])
     ax.set_yticklabels([])
 
-    #  for i in range(10):
-    #      print("episode ", i)
-    #      play_agent(env, agent, ax)
+    for i in range(5):
+        print("episode ", i)
+        play_agent(env, agent, ax)
 
-    create_movie(env, agent, ax, movie_filename='agent_journey.mp4')
+    #  create_movie(env, agent, ax, movie_filename='agent_journey.mp4')
 

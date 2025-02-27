@@ -5,11 +5,14 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from collections import deque
+from mazegen import generate_maze
 
+GRID_SIZE = 16
 # --- Environment Definition ---
 class GridWorldEnv:
     """
     Environment representing an 8x8 grid world.
+    EDIT: actually the grid_size doesn't need to be 8
 
     The grid consists of:
         0: empty cell (agent can move here)
@@ -28,17 +31,17 @@ class GridWorldEnv:
     and the episode ends when the agent reaches the goal or when the maximum steps are reached.
     """
 
-    def __init__(self, max_steps=100):
+    def __init__(self, max_steps=200):
         """
         Initialize the GridWorld environment.
 
         Args:
             max_steps (int): Maximum number of steps allowed per episode.
         """
-        self.grid_size = 8
         self.max_steps = max_steps
         self.action_space = 4  # 0: up, 1: down, 2: left, 3: right
         self.reset()
+        self.grid_size = GRID_SIZE
     
     def reset(self):
         """
@@ -51,19 +54,20 @@ class GridWorldEnv:
         Returns:
             np.ndarray: A copy of the initial grid state.
         """
-        self.grid = np.zeros((self.grid_size, self.grid_size))
-        for col in range(self.grid_size):
-            if col % 2 == 1:
-                self.grid[:, col] = 1
-                hole = random.randint(0, self.grid_size - 1)
-                self.grid[hole, col] = 0
+        #  self.grid = np.zeros((self.grid_size, self.grid_size))
+        #  for col in range(self.grid_size):
+        #      if col % 2 == 1:
+        #          self.grid[:, col] = 1
+        #          hole = random.randint(0, self.grid_size - 1)
+        #          self.grid[hole, col] = 0
+        self.grid = generate_maze(GRID_SIZE)
 
         # Place the agent (2) at a fixed starting position (top-left)
         self.agent_pos = (0, 0)
         self.grid[self.agent_pos] = 2
         
         # Place the goal (3) at a fixed location (bottom-right)
-        self.goal_pos = (self.grid_size - 1, self.grid_size - 1)
+        self.goal_pos = (GRID_SIZE - 1, GRID_SIZE - 1)
         self.grid[self.goal_pos] = 3
         
         self.steps = 0
@@ -79,7 +83,7 @@ class GridWorldEnv:
         return self.grid.copy()
 
     def dist_to_goal(self):
-        return abs(self.goal_pos[1] - self.agent_pos[1])
+        return abs(self.goal_pos[1] - self.agent_pos[1])/GRID_SIZE + abs(self.goal_pos[0] - self.agent_pos[0])/GRID_SIZE
     
     def step(self, action):
         """
@@ -113,8 +117,8 @@ class GridWorldEnv:
         new_r, new_c = r + dr, c + dc
         
         # Check for out-of-bounds or hitting a wall (cell==1)
-        if (new_r < 0 or new_r >= self.grid_size or 
-            new_c < 0 or new_c >= self.grid_size or
+        if (new_r < 0 or new_r >= GRID_SIZE or 
+            new_c < 0 or new_c >= GRID_SIZE or
             self.grid[new_r, new_c] == 1):
             # Invalid move: agent remains in place.
             reward = -2*self.dist_to_goal()
@@ -130,6 +134,8 @@ class GridWorldEnv:
         self.grid[new_r, new_c] = 2  
         done = (new_r, new_c) == self.goal_pos
         reward = -self.dist_to_goal() # step penalty (minimizing steps is the objective)
+        if done:
+            reward = 100
         return self.get_state(), reward, done, {}
     
     def render(self):
@@ -155,20 +161,22 @@ class DQN(nn.Module):
             num_actions (int): Number of possible actions.
         """
         super(DQN, self).__init__()
-        # For an 8x8 grid, a small convnet works well.
+        # For a grid of size grid_size, adjust the architecture accordingly
         self.conv1 = nn.Conv2d(input_channels, 16, kernel_size=3, padding=1)
         self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)
-        # Compute the flattened size: for an 8x8 input, the feature map remains 8x8.
-        self.fc_input_dim = 32 * 8 * 8
+        # With padding=1 and kernel_size=3, the spatial dimensions remain the same
+        # So the feature map will be of size grid_size x grid_size
+        self.fc_input_dim = 32 * GRID_SIZE * GRID_SIZE
         self.fc1 = nn.Linear(self.fc_input_dim, 128)
         self.fc2 = nn.Linear(128, num_actions)
+
         
     def forward(self, x):
         """
         Forward pass of the network.
 
         Args:
-            x (torch.Tensor): Input tensor of shape (batch, channels, 8, 8).
+            x (torch.Tensor): Input tensor of shape (batch, channels, grid_size, grid_size).
 
         Returns:
             torch.Tensor: Output Q-values for each action.
@@ -238,7 +246,7 @@ class DQNAgent:
     Deep Q-Network (DQN) agent that interacts with the environment and learns from experiences.
     """
 
-    def __init__(self, lr=1e-3, gamma=0.99, buffer_capacity=1024, batch_size=32, update_target_every=64):
+    def __init__(self, lr=5e-4, gamma=0.99, buffer_capacity=10000, batch_size=64, update_target_every=128):
         """
         Initialize the DQN agent.
 
@@ -267,7 +275,7 @@ class DQNAgent:
         self.replay_buffer = ReplayBuffer(buffer_capacity)
         self.epsilon = 1.0  # initial epsilon for epsilon-greedy
         self.epsilon_min = 0.1
-        self.epsilon_decay = 0.995  # decay factor per episode
+        self.epsilon_decay = 0.99  # decay factor per episode
     
     def preprocess(self, state):
         """
@@ -342,6 +350,7 @@ class DQNAgent:
         
         # Optimize the model
         self.optimizer.zero_grad()
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         loss.backward()
         self.optimizer.step()
         
@@ -352,9 +361,13 @@ class DQNAgent:
 
         return loss
     
-    def decay_epsilon(self):
+    def set_epsilon(self, episode, total_episodes):
         """
         Decay the epsilon value for the epsilon-greedy strategy, ensuring it doesn't go below a minimum threshold.
         """
-        self.epsilon = max(self.epsilon * self.epsilon_decay, self.epsilon_min)
+        self.epsilon = self.epsilon_min + (1.0 - self.epsilon_min) * np.exp(-3.0 * episode / total_episodes)
+
+    def zero_epsilon(self):
+        self.epsilon = 0
+
 
