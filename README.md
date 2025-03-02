@@ -39,3 +39,30 @@ Like this does not change $\argmax_\theta \E_{\tau\sim \pi_\theta} \sum_{t=0}^{T
 if the start and ending states are fixed.
 
 
+---
+
+```
+git clone https://github.com/awestover/FDT
+pip install -r requirements.txt
+```
+
+
+----
+
+plan: 
+1. try ciriculum learning
+2. why is it so slow?
+3. give up on this project :'(
+
+
+
+```python
+import cProfile
+cProfile.run('main()', 'training_stats')
+
+import pstats
+p = pstats.Stats('training_stats')
+p.sort_stats('cumulative').print_stats(30)
+```
+wow this code was useful!
+

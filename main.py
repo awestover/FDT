@@ -127,177 +127,187 @@ def update_plots(plot_elements, episode, reward, length, loss, epsilon, is_eval=
     fig.canvas.flush_events()
     plt.pause(0.01)
 
-plot_elements = setup_plotting()
+#  plot_elements = setup_plotting()
 
-"""
-Optimized training loop for DQN agent with performance enhancements.
-"""
-# Training parameters
-num_episodes = 1000
-save_every = 100
-eval_every = 20
-checkpoint_dir = "./checkpoints"
+def main():
+    """
+    Optimized training loop for DQN agent with performance enhancements.
+    """
+    # Training parameters
+    num_episodes = 20
+    save_every = 100
+    eval_every = 20
+    checkpoint_dir = "./checkpoints"
 
-# Use GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
+    # Use GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Using device: {device}")
 
-GAMMA = 0.99
+    GAMMA = 0.99
 
-# Create checkpoints directory
-os.makedirs(checkpoint_dir, exist_ok=True)
+    # Create checkpoints directory
+    os.makedirs(checkpoint_dir, exist_ok=True)
 
-# Initialize environment and agent
-env = GridWorldEnv(max_steps=100)
-#  agent = DQNAgent(lr=1e-4, gamma=GAMMA, buffer_capacity=50000, batch_size=128)
-agent = init_recurrent_agent(device)
+    # Initialize environment and agent
+    env = GridWorldEnv(max_steps=100)
+    #  agent = DQNAgent(lr=1e-4, gamma=GAMMA, buffer_capacity=50000, batch_size=128)
+    agent = init_agent(device)
 
-agent.policy_net.to(device)
-agent.target_net.to(device)
+    agent.policy_net.to(device)
+    agent.target_net.to(device)
 
-# Metrics tracking
-all_rewards = []
-episode_lengths = []
-all_losses = []
+    # Metrics tracking
+    all_rewards = []
+    episode_lengths = []
+    all_losses = []
 
-# Warmup phase - collect initial experiences with random actions
-print("Warming up replay buffer...")
-state = env.reset()
-for _ in range(min(1000, agent.replay_buffer.capacity // 10)):
-    action = random.randint(0, 3)  # Random action
-    next_state, reward, done = env.step(action, GAMMA)
-    agent.replay_buffer.push(state, action, reward, next_state, done)
-    state = next_state
-    if done:
-        state = env.reset()
-
-print(f"Starting training for {num_episodes} episodes")
-
-# Main training loop
-for episode in range(num_episodes):
+    # Warmup phase - collect initial experiences with random actions
+    print("Warming up replay buffer...")
     state = env.reset()
-    episode_reward = 0
-    episode_loss = 0
-    steps = 0
-    losses = []
-    
-    # Episode loop
-    done = False
-    while not done:
-        # Select and execute action
-        action = agent.select_action(state)
+    for _ in range(min(1000, agent.replay_buffer.capacity // 10)):
+        action = random.randint(0, 3)  # Random action
         next_state, reward, done = env.step(action, GAMMA)
-        episode_reward += reward
-        steps += 1
-        
-        # Store transition
         agent.replay_buffer.push(state, action, reward, next_state, done)
         state = next_state
-        
-        # Learn from experience
-        loss = agent.update()
-        if loss is not None:
-            losses.append(loss)
-    
-    # Update exploration rate
-    agent.set_epsilon(episode, num_episodes)
-    
-    # Calculate metrics
-    episode_lengths.append(steps)
-    all_rewards.append(episode_reward)
-    if losses:
-        episode_loss = sum(losses) / len(losses)
-        all_losses.append(episode_loss)
-    
-    # Print progress
-    if (episode + 1) % 10 == 0:
-        avg_reward = sum(all_rewards[-10:]) / 10
-        avg_length = sum(episode_lengths[-10:]) / 10
-        avg_loss = sum(all_losses[-10:]) / 10 if all_losses else 0
-        print(f"Episode {episode+1}/{num_episodes} | " 
-              f"Avg Reward: {avg_reward:.2f} | "
-              f"Avg Length: {avg_length:.1f} | "
-              f"Avg Loss: {avg_loss:.6f} | "
-              f"Epsilon: {agent.epsilon:.3f}")
-    
-        # Update the plots with latest data
-        update_plots(
-            plot_elements, 
-            episode + 1,
-            episode_reward,  # Current episode reward
-            steps,           # Current episode length
-            episode_loss,    # Current episode loss
-            agent.epsilon    # Current epsilon
-        )
+        if done:
+            state = env.reset()
 
-    # Save checkpoint
-    if (episode + 1) % save_every == 0:
-        checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
-        torch.save({
-            'model_state_dict': agent.policy_net.state_dict()
-        }, checkpoint_path)
-        print(f"Checkpoint saved at episode {episode+1}")
-    
-    # Evaluation phase
-    if (episode + 1) % eval_every == 0:
-        eval_rewards = []
-        agent.epsilon = 0  # No exploration during evaluation
+    print(f"Starting training for {num_episodes} episodes")
+
+    # Main training loop
+    for episode in range(num_episodes):
+        state = env.reset()
+        episode_reward = 0
+        episode_loss = 0
+        steps = 0
+        losses = []
         
-        for _ in range(5):  # Run 5 evaluation episodes
-            eval_state = env.reset()
-            eval_reward = 0
-            eval_done = False
+        # Episode loop
+        done = False
+        while not done:
+            # Select and execute action
+            action = agent.select_action(state)
+            next_state, reward, done = env.step(action, GAMMA)
+            episode_reward += reward
+            steps += 1
             
-            while not eval_done:
-                eval_action = agent.select_action(eval_state)
-                eval_state, reward, eval_done = env.step(eval_action, GAMMA)
-                eval_reward += reward
+            # Store transition
+            agent.replay_buffer.push(state, action, reward, next_state, done)
+            state = next_state
             
-            eval_rewards.append(eval_reward)
+            # Learn from experience
+            loss = agent.update()
+            if loss is not None:
+                losses.append(loss)
         
-        avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
-        print(f"Evaluation: Avg Reward = {avg_eval_reward:.2f}")
-        
-        # Reset epsilon for training
+        # Update exploration rate
         agent.set_epsilon(episode, num_episodes)
         
-        # After running evaluation episodes and calculating avg_eval_reward
-        update_plots(
-            plot_elements,
-            episode + 1,
-            None,
-            None,
-            None,
-            None,
-            is_eval=True,
-            eval_reward=avg_eval_reward
-        )
+        # Calculate metrics
+        episode_lengths.append(steps)
+        all_rewards.append(episode_reward)
+        if losses:
+            episode_loss = sum(losses) / len(losses)
+            all_losses.append(episode_loss)
+        
+        # Print progress
+        if (episode + 1) % 10 == 0:
+            avg_reward = sum(all_rewards[-10:]) / 10
+            avg_length = sum(episode_lengths[-10:]) / 10
+            avg_loss = sum(all_losses[-10:]) / 10 if all_losses else 0
+            print(f"Episode {episode+1}/{num_episodes} | " 
+                  f"Avg Reward: {avg_reward:.2f} | "
+                  f"Avg Length: {avg_length:.1f} | "
+                  f"Avg Loss: {avg_loss:.6f} | ")
+                  #  f"Epsilon: {agent.epsilon:.3f}")
+        
+            # Update the plots with latest data
+            #  update_plots(
+            #      plot_elements, 
+            #      episode + 1,
+            #      episode_reward,  # Current episode reward
+            #      steps,           # Current episode length
+            #      episode_loss,    # Current episode loss
+            #      agent.epsilon    # Current epsilon
+            #  )
 
-# Plot training metrics
-plt.figure(figsize=(12, 8))
+        # Save checkpoint
+        if (episode + 1) % save_every == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
+            torch.save({
+                'model_state_dict': agent.policy_net.state_dict()
+            }, checkpoint_path)
+            print(f"Checkpoint saved at episode {episode+1}")
+        
+        # Evaluation phase
+        if (episode + 1) % eval_every == 0:
+            eval_rewards = []
+            agent.epsilon = 0  # No exploration during evaluation
+            
+            for _ in range(5):  # Run 5 evaluation episodes
+                eval_state = env.reset()
+                eval_reward = 0
+                eval_done = False
+                
+                while not eval_done:
+                    eval_action = agent.select_action(eval_state)
+                    eval_state, reward, eval_done = env.step(eval_action, GAMMA)
+                    eval_reward += reward
+                
+                eval_rewards.append(eval_reward)
+            
+            avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
+            print(f"Evaluation: Avg Reward = {avg_eval_reward:.2f}")
+            
+            # Reset epsilon for training
+            agent.set_epsilon(episode, num_episodes)
+            
+            # After running evaluation episodes and calculating avg_eval_reward
+            #  update_plots(
+            #      plot_elements,
+            #      episode + 1,
+            #      None,
+            #      None,
+            #      None,
+            #      None,
+            #      is_eval=True,
+            #      eval_reward=avg_eval_reward
+            #  )
 
-plt.subplot(2, 2, 1)
-plt.plot(all_rewards)
-plt.title('Episode Rewards')
-plt.xlabel('Episode')
-plt.ylabel('Total Reward')
+    #  # Plot training metrics
+    #  plt.figure(figsize=(12, 8))
 
-plt.subplot(2, 2, 2)
-plt.plot(episode_lengths)
-plt.title('Episode Lengths')
-plt.xlabel('Episode')
-plt.ylabel('Steps')
+    #  plt.subplot(2, 2, 1)
+    #  plt.plot(all_rewards)
+    #  plt.title('Episode Rewards')
+    #  plt.xlabel('Episode')
+    #  plt.ylabel('Total Reward')
 
-if all_losses:
-    plt.subplot(2, 2, 3)
-    plt.plot(all_losses)
-    plt.title('Training Loss')
-    plt.xlabel('Episode')
-    plt.ylabel('Loss')
+    #  plt.subplot(2, 2, 2)
+    #  plt.plot(episode_lengths)
+    #  plt.title('Episode Lengths')
+    #  plt.xlabel('Episode')
+    #  plt.ylabel('Steps')
 
-plt.tight_layout()
-plt.savefig('training_metrics.png')
-plt.show()
+    #  if all_losses:
+    #      plt.subplot(2, 2, 3)
+    #      plt.plot(all_losses)
+    #      plt.title('Training Loss')
+    #      plt.xlabel('Episode')
+    #      plt.ylabel('Loss')
 
-print("Training completed!")
+    #  plt.tight_layout()
+    #  plt.savefig('training_metrics.png')
+    #  plt.show()
+
+    print("Training completed!")
+
+
+import cProfile
+cProfile.run('main()', 'training_stats')
+
+import pstats
+p = pstats.Stats('training_stats')
+p.sort_stats('cumulative').print_stats(30)
+
 

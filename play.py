@@ -49,7 +49,8 @@ def play_agent(env, agent, ax):
 
 if __name__ == '__main__':
     env = GridWorldEnv(max_steps=100)
-    agent = DQNAgent()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    agent = init_agent(device)
     checkpoint_path = 'checkpoints/checkpoint_100.pth'
     checkpoint = torch.load(checkpoint_path, weights_only=True) # weights_only=False if it's broken
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
