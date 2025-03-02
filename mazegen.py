@@ -12,7 +12,7 @@ def generate_maze(size=16, branch_probability=0.5):
     num_paths = int(size ** 0.5)
     
     # Use an integer grid for speed.
-    grid = np.ones((size, size), dtype=np.int32)
+    grid = np.ones((size, size), dtype=np.int8)
     
     def generate_waypoints():
         """Generate a sequence of waypoints moving toward the goal using NumPy's randomness."""
@@ -170,8 +170,19 @@ def generate_maze(size=16, branch_probability=0.5):
     
     return grid
 
+def generate_simple_maze(size=16, branch_probability=0.5):
+    grid = np.zeros((size, size), dtype=np.int8)
+    holes = np.random.randint(0, size-1, size//2)
+    for col in range(size//2):
+        grid[:, 2*col+1] = 1
+        grid[holes[col], 2*col+1] = 0
+    grid[-1,-1] = 0
+    return grid
+
 if __name__ == "__main__":
-    maze = generate_maze(16)
+    #  maze = generate_maze(16)
+    maze = generate_simple_maze(8)
+
     print(maze)
     import matplotlib.pyplot as plt
     plt.figure(figsize=(10, 10))
@@ -179,3 +190,5 @@ if __name__ == "__main__":
     plt.title("Maze with Branchy Dead Ends")
     plt.axis('off')
     plt.show()
+
+
