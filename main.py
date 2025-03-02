@@ -138,6 +138,10 @@ save_every = 100
 eval_every = 20
 checkpoint_dir = "./checkpoints"
 
+# Use GPU if available
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
+
 GAMMA = 0.99
 
 # Create checkpoints directory
@@ -145,11 +149,9 @@ os.makedirs(checkpoint_dir, exist_ok=True)
 
 # Initialize environment and agent
 env = GridWorldEnv(max_steps=100)
-agent = DQNAgent(lr=1e-4, gamma=GAMMA, buffer_capacity=50000, batch_size=128)
+#  agent = DQNAgent(lr=1e-4, gamma=GAMMA, buffer_capacity=50000, batch_size=128)
+agent = init_recurrent_agent(device)
 
-# Use GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"Using device: {device}")
 agent.policy_net.to(device)
 agent.target_net.to(device)
 

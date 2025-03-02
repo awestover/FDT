@@ -135,13 +135,13 @@ class GridWorldEnv:
 
 
 
-class DQN(nn.Module):
+class RecurrentDQN(nn.Module):
     """
-     DQN architecture that can remember past states using LSTM layers.
+    Recurrent DQN architecture that can remember past states using LSTM layers.
     This allows the agent to make decisions based on trajectory history.
     """
     def __init__(self, input_channels, num_actions, lstm_hidden_size=128, sequence_length=4):
-        super(DQN, self).__init__()
+        super(RecurrentDQN, self).__init__()
         
         self.lstm_hidden_size = lstm_hidden_size
         self.sequence_length = sequence_length
@@ -240,6 +240,9 @@ class DQN(nn.Module):
             h0 = torch.zeros(1, batch_size, self.lstm_hidden_size).to(x.device)
             c0 = torch.zeros(1, batch_size, self.lstm_hidden_size).to(x.device)
             hidden_state = (h0, c0)
+        else:
+            # Ensure hidden state is on the same device as input
+            hidden_state = (hidden_state[0].to(x.device), hidden_state[1].to(x.device))
         
         # Process through LSTM
         lstm_out, new_hidden_state = self.lstm(lstm_input, hidden_state)
@@ -254,18 +257,23 @@ class DQN(nn.Module):
         return q_values, new_hidden_state
 
 
-class DQNAgent:
+class RecurrentDQNAgent:
     """
     DQN Agent using a recurrent neural network to maintain memory of past states.
     """
     def __init__(self, lr=3e-4, gamma=0.99, buffer_capacity=50000, batch_size=32, 
-                 update_target_every=500, sequence_length=4):
+                 update_target_every=500, sequence_length=4, device=None):
         """
-        Initialize the  DQN agent.
+        Initialize the Recurrent DQN agent.
         
         Args:
             sequence_length: Number of consecutive states to consider
+            device: Device to run the model on (cuda or cpu)
         """
+        # Set the device
+        self.device = device if device is not None else torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        print(f"RecurrentDQNAgent using device: {self.device}")
+        
         self.gamma = gamma
         self.batch_size = batch_size
         self.update_target_every = update_target_every
@@ -278,10 +286,10 @@ class DQNAgent:
         self.num_actions = 4  # up, down, left, right
         
         # Initialize networks
-        self.policy_net = DQN(self.input_channels, self.num_actions, 
-                                      sequence_length=sequence_length)
-        self.target_net = DQN(self.input_channels, self.num_actions, 
-                                      sequence_length=sequence_length)
+        self.policy_net = RecurrentDQN(self.input_channels, self.num_actions, 
+                                      sequence_length=sequence_length).to(self.device)
+        self.target_net = RecurrentDQN(self.input_channels, self.num_actions, 
+                                      sequence_length=sequence_length).to(self.device)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
         
@@ -290,7 +298,7 @@ class DQNAgent:
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=500, gamma=0.5)
         
         # Experience replay buffer for sequences
-        self.replay_buffer = ReplayBuffer(buffer_capacity, sequence_length)
+        self.replay_buffer = RecurrentReplayBuffer(buffer_capacity, sequence_length)
         
         # Exploration parameters
         self.epsilon = 1.0
@@ -312,7 +320,8 @@ class DQNAgent:
         one_hot = F.one_hot(state_tensor, num_classes=4)
         # Rearrange to (channels, height, width)
         one_hot = one_hot.permute(2, 0, 1).float()
-        return one_hot.unsqueeze(0)  # add batch dimension
+        # Move to the appropriate device
+        return one_hot.unsqueeze(0).to(self.device)  # add batch dimension
     
     def select_action(self, current_state):
         """
@@ -379,11 +388,11 @@ class DQNAgent:
                 if len(self.state_sequence) < 2:
                     q_values, self.hidden_state = self.policy_net(current_state_tensor, self.hidden_state)
                 else:
-                    # Stack states along batch dimension first
-                    batch_states = torch.cat(self.state_sequence, dim=0)
-                    # Then reshape to (1, seq_len, channels, height, width)
-                    batch_states = batch_states.unsqueeze(0)
-                    q_values, self.hidden_state = self.policy_net(batch_states, self.hidden_state)
+                    # Concatenate states along batch dimension
+                    states_sequence = torch.cat(self.state_sequence, dim=0)
+                    # Add sequence dimension and reorder to (batch, seq, channels, height, width)
+                    states_sequence = states_sequence.unsqueeze(0)
+                    q_values, self.hidden_state = self.policy_net(states_sequence, self.hidden_state)
                 
                 return q_values.max(1)[1].item()
     
@@ -415,10 +424,10 @@ class DQNAgent:
             state_batch_t = torch.cat([self.preprocess(s) for s in states_t])
             next_state_batch_t = torch.cat([self.preprocess(s) for s in next_states_t])
             
-            # Convert other variables to tensors
-            action_batch_t = torch.tensor(actions_t).unsqueeze(1)
-            reward_batch_t = torch.tensor(rewards_t, dtype=torch.float32)
-            done_batch_t = torch.tensor(dones_t, dtype=torch.float32)
+            # Convert other variables to tensors and move to device
+            action_batch_t = torch.tensor(actions_t, device=self.device).unsqueeze(1)
+            reward_batch_t = torch.tensor(rewards_t, dtype=torch.float32, device=self.device)
+            done_batch_t = torch.tensor(dones_t, dtype=torch.float32, device=self.device)
             
             # Get current Q values - for now, treat each state independently
             current_q_values, _ = self.policy_net(state_batch_t)
@@ -427,12 +436,12 @@ class DQNAgent:
             # Compute target Q values
             with torch.no_grad():
                 # Get actions from policy net
-                next_actions, _ = self.policy_net(next_state_batch_t)
-                next_actions = next_actions.max(1)[1].unsqueeze(1)
+                next_q_values_policy, _ = self.policy_net(next_state_batch_t)
+                next_actions = next_q_values_policy.max(1)[1].unsqueeze(1)
                 
                 # Get Q-values from target net for those actions
-                next_q_values, _ = self.target_net(next_state_batch_t)
-                next_q_values = next_q_values.gather(1, next_actions)
+                next_q_values_target, _ = self.target_net(next_state_batch_t)
+                next_q_values = next_q_values_target.gather(1, next_actions)
                 
                 # Compute target values
                 target_q_values = reward_batch_t.unsqueeze(1) + self.gamma * next_q_values * (1 - done_batch_t.unsqueeze(1))
@@ -486,7 +495,7 @@ class DQNAgent:
         self.epsilon = 0
 
 
-class ReplayBuffer:
+class RecurrentReplayBuffer:
     """
     Replay buffer specifically designed for recurrent networks,
     storing sequences of experiences.
@@ -553,345 +562,21 @@ class ReplayBuffer:
         """
         return len(self.buffer)
 
-#  # --- Modified DQN Network Definition ---
-#  class DQN(nn.Module):
-#      """
-#      Improved DQN architecture optimized for maze navigation with better spatial reasoning.
-#      Uses a combination of strided convolutions and dilation to maintain spatial sensitivity
-#      while being computationally efficient.
-#      """
-#      def __init__(self, input_channels, num_actions):
-#          super(DQN, self).__init__()
-        
-#          # First layer maintains full spatial resolution
-#          self.conv1 = nn.Conv2d(input_channels, 16, kernel_size=3, stride=1, padding=1)
-#          self.bn1 = nn.BatchNorm2d(16)
-        
-#          # Second layer uses stride=2 for some downsampling
-#          self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=2, padding=1)
-#          self.bn2 = nn.BatchNorm2d(32)
-        
-#          # Third layer uses dilated convolution to increase receptive field while maintaining resolution
-#          self.conv3 = nn.Conv2d(32, 32, kernel_size=3, stride=1, padding=2, dilation=2)
-#          self.bn3 = nn.BatchNorm2d(32)
-        
-#          # Calculate input size for fully connected layer (only one stride-2 reduction)
-#          fc_input_size = 32 * (GRID_SIZE // 2) * (GRID_SIZE // 2)
-        
-#          # Smaller fully connected layers to reduce parameters
-#          self.fc1 = nn.Linear(fc_input_size, 256)
-#          self.dropout = nn.Dropout(0.2)
-#          self.fc2 = nn.Linear(256, 128)
-#          self.fc3 = nn.Linear(128, num_actions)
-        
-#          # Initialize weights properly
-#          self._initialize_weights()
-        
-#      def _initialize_weights(self):
-#          for m in self.modules():
-#              if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
-#                  nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
-#                  if m.bias is not None:
-#                      nn.init.constant_(m.bias, 0)
-#              elif isinstance(m, nn.BatchNorm2d):
-#                  nn.init.constant_(m.weight, 1)
-#                  nn.init.constant_(m.bias, 0)
-        
-#      def forward(self, x):
-#          # First layer preserves spatial information
-#          x = F.relu(self.bn1(self.conv1(x)))
-        
-#          # Single downsampling step (GRID_SIZE → GRID_SIZE/2)
-#          x = F.relu(self.bn2(self.conv2(x)))
-        
-#          # Dilated convolution to increase receptive field without losing resolution
-#          x = F.relu(self.bn3(self.conv3(x)))
-        
-#          x = x.view(x.size(0), -1)  # Flatten
-#          x = F.relu(self.fc1(x))
-#          x = self.dropout(x)
-#          x = F.relu(self.fc2(x))
-#          return self.fc3(x)
 
-#  # --- Improved DQN Agent ---
-#  class DQNAgent:
-#      """
-#      Enhanced DQN agent with improved exploration, learning strategy, and reward shaping.
-#      """
+# Modify main.py to initialize the agent with the device
+def init_recurrent_agent(device=None):
+    """
+    Initialize a RecurrentDQNAgent with the specified device or auto-detect.
+    """
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    agent = RecurrentDQNAgent(
+        lr=1e-4, 
+        gamma=0.99, 
+        buffer_capacity=50000, 
+        batch_size=32,
+        sequence_length=4,
+        device=device
+    )
+    return agent 
 
-#      def __init__(self, lr=3e-4, gamma=0.99, buffer_capacity=50000, batch_size=128, update_target_every=500):
-#          """
-#          Initialize the DQN agent with improved parameters.
-#          """
-#          self.gamma = gamma
-#          self.batch_size = batch_size
-#          self.update_target_every = update_target_every
-#          self.steps_done = 0
-#          self.learning_steps = 0
-        
-#          # Our grid has 4 distinct values (0,1,2,3) -> one-hot encoded to 4 channels.
-#          self.input_channels = 4
-#          self.num_actions = 4
-        
-#          # Use the improved network architecture
-#          self.policy_net = DQN(self.input_channels, self.num_actions)
-#          self.target_net = DQN(self.input_channels, self.num_actions)
-#          self.target_net.load_state_dict(self.policy_net.state_dict())
-#          self.target_net.eval()  # set target net to evaluation mode
-        
-#          # Use a more sophisticated optimizer
-#          self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr, weight_decay=1e-5)
-        
-#          # Learning rate scheduler to reduce LR over time
-#          self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=500, gamma=0.5)
-        
-#          # Improved replay buffer
-#          self.replay_buffer = PrioritizedReplayBuffer(buffer_capacity, alpha=0.6, beta=0.4)
-        
-#          # Better exploration strategy
-#          self.epsilon = 1.0
-#          self.epsilon_min = 0.05
-#          self.epsilon_decay = 0.998  # Slower decay for better exploration
-        
-#          # For tracking progress
-#          self.best_reward = -float('inf')
-#          self.reward_window = deque(maxlen=100)
-    
-#      def preprocess(self, state):
-#          """
-#          Preprocess the grid state by converting it into a one-hot encoded tensor.
-#          """
-#          state_tensor = torch.from_numpy(state).long()
-#          one_hot = F.one_hot(state_tensor, num_classes=4)
-#          # Rearrange to (channels, height, width)
-#          one_hot = one_hot.permute(2, 0, 1).float()
-#          return one_hot.unsqueeze(0)  # add batch dimension
-    
-#      def select_action(self, state):
-#          """
-#          Select an action using an improved epsilon-greedy strategy.
-#          """
-#          sample = random.random()
-#          if sample < self.epsilon:
-#              # More sophisticated exploration strategy - include some directional bias
-#              # toward unexplored areas based on current position
-#              r, c = None, None
-#              for i in range(state.shape[0]):
-#                  for j in range(state.shape[1]):
-#                      if state[i, j] == 2:  # Agent position
-#                          r, c = i, j
-#                          break
-#                  if r is not None:
-#                      break
-            
-#              if r is not None:
-#                  # Bias exploration toward goal
-#                  goal_r, goal_c = GRID_SIZE - 1, GRID_SIZE - 1
-                
-#                  # Calculate direction weights
-#                  weights = np.ones(4) * 0.25  # Equal probability by default
-                
-#                  # Up, Down, Left, Right
-#                  if r > 0 and state[r-1, c] != 1:  # Can move up
-#                      if r > goal_r:  # If agent is below goal, increase up probability
-#                          weights[0] = 0.4
-#                  if r < GRID_SIZE-1 and state[r+1, c] != 1:  # Can move down
-#                      if r < goal_r:  # If agent is above goal, increase down probability
-#                          weights[1] = 0.4
-#                  if c > 0 and state[r, c-1] != 1:  # Can move left
-#                      if c > goal_c:  # If agent is to the right of goal, increase left probability
-#                          weights[2] = 0.4
-#                  if c < GRID_SIZE-1 and state[r, c+1] != 1:  # Can move right
-#                      if c < goal_c:  # If agent is to the left of goal, increase right probability
-#                          weights[3] = 0.4
-                
-#                  weights = weights / weights.sum()  # Normalize
-                
-#                  return np.random.choice(self.num_actions, p=weights)
-            
-#              return random.randrange(self.num_actions)
-#          else:
-#              with torch.no_grad():
-#                  state_tensor = self.preprocess(state)
-#                  q_values = self.policy_net(state_tensor)
-#                  return q_values.max(1)[1].item()
-    
-#      def update(self):
-#          """
-#          Update the policy network with improved experience replay and learning process.
-#          """
-#          if len(self.replay_buffer) < self.batch_size:
-#              return None
-        
-#          # Sample experiences with priorities
-#          states, actions, rewards, next_states, dones, indices, weights = self.replay_buffer.sample(self.batch_size)
-        
-#          # Preprocess states and next_states
-#          state_batch = torch.cat([self.preprocess(s) for s in states])
-#          next_state_batch = torch.cat([self.preprocess(s) for s in next_states])
-#          action_batch = torch.tensor(actions).unsqueeze(1)
-#          reward_batch = torch.tensor(rewards, dtype=torch.float32)
-#          done_batch = torch.tensor(dones, dtype=torch.float32)
-#          weights_batch = torch.tensor(weights, dtype=torch.float32)
-        
-#          # Compute current Q values
-#          q_values = self.policy_net(state_batch).gather(1, action_batch)
-        
-#          # Compute next state values using target network (Double DQN)
-#          with torch.no_grad():
-#              # Get actions from policy net
-#              next_actions = self.policy_net(next_state_batch).max(1)[1].unsqueeze(1)
-#              # Get Q-values from target net for those actions
-#              next_q_values = self.target_net(next_state_batch).gather(1, next_actions)
-#              # Use target Q-values in Bellman equation
-#              target_q_values = reward_batch.unsqueeze(1) + self.gamma * next_q_values * (1 - done_batch.unsqueeze(1))
-        
-#          # Calculate TD errors for priority updates
-#          td_errors = torch.abs(q_values - target_q_values).detach().numpy()
-        
-#          # Compute weighted Huber loss
-#          loss = F.smooth_l1_loss(q_values, target_q_values, reduction='none')
-#          weighted_loss = (loss * weights_batch.unsqueeze(1)).mean()
-        
-#          # Optimize the model
-#          self.optimizer.zero_grad()
-#          weighted_loss.backward()
-#          # Clip gradients to prevent exploding gradients
-#          torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=10.0)
-#          self.optimizer.step()
-        
-#          # Update priorities in the replay buffer with a small constant to prevent zero priority
-#          self.replay_buffer.update_priorities(indices, td_errors + 1e-5)
-        
-#          # Periodically update the target network
-#          self.steps_done += 1
-#          self.learning_steps += 1
-        
-#          if self.steps_done % self.update_target_every == 0:
-#              self.target_net.load_state_dict(self.policy_net.state_dict())
-            
-#          # Update learning rate
-#          self.scheduler.step()
-            
-#          return weighted_loss.item()
-    
-#      def set_epsilon(self, episode, total_episodes):
-#          """
-#          Improved epsilon decay strategy for better exploration-exploitation balance.
-#          """
-#          # More sophisticated decay that starts slow and accelerates
-#          if episode < total_episodes * 0.2:
-#              # Slow decay in the beginning to encourage exploration
-#              self.epsilon = max(self.epsilon_min, 1.0 - episode / (total_episodes * 0.5))
-#          else:
-#              # Faster decay later to focus on exploitation
-#              self.epsilon = max(self.epsilon_min, 
-#                                 self.epsilon_min + (1.0 - self.epsilon_min) * 
-#                                 np.exp(-5.0 * (episode - total_episodes * 0.2) / total_episodes))
 
-#      def zero_epsilon(self):
-#          self.epsilon = 0
-
-#  class PrioritizedReplayBuffer:
-#      """
-#      Prioritized Experience Replay buffer that stores transitions based on TD error.
-#      This helps the agent learn more efficiently from important experiences.
-#      """
-#      def __init__(self, capacity, alpha=0.6, beta=0.4, beta_increment=0.001):
-#          """
-#          Initialize the prioritized replay buffer.
-        
-#          Args:
-#              capacity (int): Maximum size of the buffer
-#              alpha (float): How much prioritization to use (0 = uniform sampling)
-#              beta (float): Importance sampling correction factor (0 = no correction)
-#              beta_increment (float): How much to increase beta per sampling
-#          """
-#          self.capacity = capacity
-#          self.alpha = alpha
-#          self.beta = beta
-#          self.beta_increment = beta_increment
-#          self.buffer = []
-#          self.priorities = np.ones(capacity)
-#          self.position = 0
-        
-#      def push(self, state, action, reward, next_state, done):
-#          """
-#          Add a new experience to memory with maximum priority.
-        
-#          Args:
-#              state: Current state
-#              action: Action taken
-#              reward: Reward received
-#              next_state: Next state
-#              done: Whether the episode ended
-#          """
-#          max_priority = self.priorities.max() if self.buffer else 1.0
-        
-#          if len(self.buffer) < self.capacity:
-#              self.buffer.append((state, action, reward, next_state, done))
-#          else:
-#              self.buffer[self.position] = (state, action, reward, next_state, done)
-            
-#          self.priorities[self.position] = max_priority
-#          self.position = (self.position + 1) % self.capacity
-    
-#      def sample(self, batch_size):
-#          """
-#          Sample a batch of experiences based on their priorities.
-        
-#          Args:
-#              batch_size (int): Number of experiences to sample
-            
-#          Returns:
-#              tuple: Batch of experiences and importance sampling weights
-#          """
-#          if len(self.buffer) < batch_size:
-#              indices = np.random.choice(len(self.buffer), batch_size, replace=True)
-#          else:
-#              # Calculate sampling probabilities
-#              priorities = self.priorities[:len(self.buffer)]
-#              probabilities = priorities ** self.alpha
-#              probabilities /= probabilities.sum()
-            
-#              # Sample based on priorities
-#              indices = np.random.choice(len(self.buffer), batch_size, p=probabilities)
-            
-#          # Calculate importance sampling weights
-#          weights = (len(self.buffer) * probabilities[indices]) ** (-self.beta)
-#          weights /= weights.max()
-#          self.beta = min(1.0, self.beta + self.beta_increment)
-        
-#          # Get the sampled experiences
-#          batch = [self.buffer[idx] for idx in indices]
-#          states, actions, rewards, next_states, dones = zip(*batch)
-        
-#          # Convert to numpy arrays
-#          return (
-#              np.array(states), 
-#              np.array(actions), 
-#              np.array(rewards, dtype=np.float32), 
-#              np.array(next_states), 
-#              np.array(dones, dtype=np.float32),
-#              indices,
-#              np.array(weights, dtype=np.float32)
-#          )
-    
-#      def update_priorities(self, indices, td_errors):
-#          """
-#          Update priorities based on TD errors.
-        
-#          Args:
-#              indices (list): Indices to update
-#              td_errors (list): TD errors for each experience
-#          """
-#          for idx, error in zip(indices, td_errors):
-#              self.priorities[idx] = abs(error) + 1e-5  # Add small constant to avoid zero priority
-    
-#      def __len__(self):
-#          """
-#          Return current buffer size.
-#          """
-#          return len(self.buffer)
-
-    
