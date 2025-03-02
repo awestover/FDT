@@ -54,12 +54,6 @@ class GridWorldEnv:
         Returns:
             np.ndarray: A copy of the initial grid state.
         """
-        #  self.grid = np.zeros((self.grid_size, self.grid_size))
-        #  for col in range(self.grid_size):
-        #      if col % 2 == 1:
-        #          self.grid[:, col] = 1
-        #          hole = random.randint(0, self.grid_size - 1)
-        #          self.grid[hole, col] = 0
         self.grid = generate_maze(GRID_SIZE)
 
         # Place the agent (2) at a fixed starting position (top-left)
@@ -74,12 +68,6 @@ class GridWorldEnv:
         return self.get_state()
     
     def get_state(self):
-        """
-        Get the current state of the environment.
-
-        Returns:
-            np.ndarray: A copy of the current grid state.
-        """
         return self.grid.copy()
     
     def step(self, action):
@@ -96,13 +84,12 @@ class GridWorldEnv:
                 - done (bool): Whether the episode has ended.
         """
         self.steps += 1
-        
-        # Get current distance to goal
-        old_dist = self.manhattan_distance()
-        
-        # Terminate if maximum steps exceeded
         if self.steps >= self.max_steps:
             return self.get_state(), 0, True
+
+        INVALID_PENALTY = -2
+        WIN_BONUS = 2*self.max_steps
+        # normal score: change in distance to goal, with a bit of discounting
 
         # Map action to movement (row, col)
         move_map = {
@@ -119,56 +106,30 @@ class GridWorldEnv:
         if (new_r < 0 or new_r >= GRID_SIZE or 
             new_c < 0 or new_c >= GRID_SIZE or
             self.grid[new_r, new_c] == 1):
-            # Invalid move: small penalty and no state change
-            return self.get_state(), -0.2, False
-        
+            return self.get_state(), INVALID_PENALTY, False
+
         # Valid move: update the grid
-        # Clear old agent position
-        self.grid[r, c] = 0
-        
-        # Update agent position
+        old_dist = self.dist_to_goal()
         self.agent_pos = (new_r, new_c)
+        new_dist = self.dist_to_goal()
+        self.grid[r, c] = 0
         self.grid[new_r, new_c] = 2
         
-        # Check if new cell is the goal
         done = (new_r, new_c) == self.goal_pos
         
-        # Calculate new distance to goal
-        new_dist = self.manhattan_distance()
-        
-        # Reward structure:
-        # 1. High reward for reaching goal
-        # 2. Small reward for moving closer to goal
-        # 3. Small penalty for moving away from goal
-        # 4. Small step penalty to encourage efficiency
         if done:
-            reward = 10.0  # Big reward for reaching goal
+            reward = 2*max_steps  # Big reward for reaching goal
         else:
-            # Reward progress toward goal
-            if new_dist < old_dist:
-                reward = 0.2  # Small reward for getting closer
-            elif new_dist > old_dist:
-                reward = -0.1  # Small penalty for getting further
-            else:
-                reward = -0.05  # Tiny penalty for lateral movement
+            reward = old_dist - self.gamma*new_dist
                 
         return self.get_state(), reward, done
 
-    def manhattan_distance(self):
-        """
-        Calculate Manhattan distance from agent to goal.
-        
-        Returns:
-            float: Normalized distance between 0 and 1
-        """
+    def dist_to_goal(self):
         r, c = self.agent_pos
         gr, gc = self.goal_pos
-        return (abs(gr - r) + abs(gc - c)) / (2 * GRID_SIZE)
-        
+        return abs(gr - r) + abs(gc - c)        
+
     def render(self):
-        """
-        Render the current state of the grid to the console.
-        """
         for row in self.grid:
             print(" ".join(str(int(cell)) for cell in row))
 

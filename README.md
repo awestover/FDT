@@ -15,3 +15,21 @@ Ideas for fixing this
 for instance, the input could include the last couple places
 where the guy has been or something
 
+6. "ciriculum learning" -- start with easy mazes, work up to
+   harder ones.
+   this could look like having mazes which are mostly empty to
+   start with :)
+
+---
+
+oh dear. 
+I think I made my reward hackable.
+going back and forth gets infinite reward. sigh.
+i hope we never do that irl
+
+---
+
+oh apparently a pretty principled way to do reward shaping is 
+by adding $\gamma*\phi(S_{t+1}) - \phi(S_t)$.
+Like this does not change $\argmax_\theta \E_{\tau\sim \pi_\theta} \sum_{t=0}^{T} \gamma^{t}r_t$ 
+if the start and ending states are fixed.
