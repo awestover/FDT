@@ -134,13 +134,13 @@ class GridWorldEnv:
             print(" ".join(str(int(cell)) for cell in row))
 
 
-class RecurrentDQN(nn.Module):
+class DQN(nn.Module):
     """
-    Recurrent DQN architecture that can remember past states using LSTM layers.
+     DQN architecture that can remember past states using LSTM layers.
     This allows the agent to make decisions based on trajectory history.
     """
     def __init__(self, input_channels, num_actions, lstm_hidden_size=128, sequence_length=4):
-        super(RecurrentDQN, self).__init__()
+        super(DQN, self).__init__()
         
         self.lstm_hidden_size = lstm_hidden_size
         self.sequence_length = sequence_length
@@ -253,14 +253,14 @@ class RecurrentDQN(nn.Module):
         return q_values, new_hidden_state
 
 # Modified agent class to handle recurrent network
-class RecurrentDQNAgent:
+class DQNAgent:
     """
     DQN Agent using a recurrent neural network to maintain memory of past states.
     """
     def __init__(self, lr=3e-4, gamma=0.99, buffer_capacity=50000, batch_size=32, 
                  update_target_every=500, sequence_length=4):
         """
-        Initialize the Recurrent DQN agent.
+        Initialize the  DQN agent.
         
         Args:
             sequence_length: Number of consecutive states to consider
@@ -277,9 +277,9 @@ class RecurrentDQNAgent:
         self.num_actions = 4  # up, down, left, right
         
         # Initialize networks
-        self.policy_net = RecurrentDQN(self.input_channels, self.num_actions, 
+        self.policy_net = DQN(self.input_channels, self.num_actions, 
                                       sequence_length=sequence_length)
-        self.target_net = RecurrentDQN(self.input_channels, self.num_actions, 
+        self.target_net = DQN(self.input_channels, self.num_actions, 
                                       sequence_length=sequence_length)
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
@@ -289,7 +289,7 @@ class RecurrentDQNAgent:
         self.scheduler = optim.lr_scheduler.StepLR(self.optimizer, step_size=500, gamma=0.5)
         
         # Experience replay buffer for sequences
-        self.replay_buffer = RecurrentReplayBuffer(buffer_capacity, sequence_length)
+        self.replay_buffer = ReplayBuffer(buffer_capacity, sequence_length)
         
         # Exploration parameters
         self.epsilon = 1.0
@@ -478,7 +478,7 @@ class RecurrentDQNAgent:
         self.epsilon = 0
 
 
-class RecurrentReplayBuffer:
+class ReplayBuffer:
     """
     Replay buffer specifically designed for recurrent networks,
     storing sequences of experiences.
