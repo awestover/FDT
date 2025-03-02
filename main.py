@@ -138,12 +138,14 @@ save_every = 100
 eval_every = 20
 checkpoint_dir = "./checkpoints"
 
+GAMMA = 0.99
+
 # Create checkpoints directory
 os.makedirs(checkpoint_dir, exist_ok=True)
 
 # Initialize environment and agent
 env = GridWorldEnv(max_steps=100)
-agent = DQNAgent(lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=128)
+agent = DQNAgent(lr=1e-4, gamma=GAMMA, buffer_capacity=50000, batch_size=128)
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -161,7 +163,7 @@ print("Warming up replay buffer...")
 state = env.reset()
 for _ in range(min(1000, agent.replay_buffer.capacity // 10)):
     action = random.randint(0, 3)  # Random action
-    next_state, reward, done = env.step(action)
+    next_state, reward, done = env.step(action, GAMMA)
     agent.replay_buffer.push(state, action, reward, next_state, done)
     state = next_state
     if done:
@@ -182,7 +184,7 @@ for episode in range(num_episodes):
     while not done:
         # Select and execute action
         action = agent.select_action(state)
-        next_state, reward, done = env.step(action)
+        next_state, reward, done = env.step(action, GAMMA)
         episode_reward += reward
         steps += 1
         
@@ -246,7 +248,7 @@ for episode in range(num_episodes):
             
             while not eval_done:
                 eval_action = agent.select_action(eval_state)
-                eval_state, reward, eval_done = env.step(eval_action)
+                eval_state, reward, eval_done = env.step(eval_action, GAMMA)
                 eval_reward += reward
             
             eval_rewards.append(eval_reward)

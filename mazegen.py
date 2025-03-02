@@ -170,7 +170,7 @@ def generate_maze(size=16, branch_probability=0.5):
     
     return grid
 
-def generate_simple_maze(size=16, branch_probability=0.5):
+def generate_simple_maze(size=16):
     grid = np.zeros((size, size), dtype=np.int8)
     holes = np.random.randint(0, size-1, size//2)
     for col in range(size//2):
@@ -179,9 +179,54 @@ def generate_simple_maze(size=16, branch_probability=0.5):
     grid[-1,-1] = 0
     return grid
 
+def generate_easy_maze(size=16, difficulty=0.5):
+    """
+    Generate a simple maze with controlled difficulty - optimized version.
+    
+    Args:
+        size (int): Size of the maze (size x size grid)
+        difficulty (float): Value between 0.0 and 1.0 controlling maze difficulty
+                           - 0.0: Very easy (many holes in walls)
+                           - 1.0: Very difficult (few holes in walls)
+    
+    Returns:
+        np.ndarray: Grid representing the maze
+    """
+    # Create empty grid
+    grid = np.zeros((size, size), dtype=np.int8)
+    
+    # Place walls in odd-numbered columns
+    for col in range(1, size, 2):
+        grid[:, col] = 1
+    
+    # Calculate number of holes based on difficulty
+    # Clamp difficulty between 0 and 1
+    difficulty = max(0.0, min(1.0, difficulty))
+    
+    # Calculate holes per wall: inverse relationship with difficulty
+    # At difficulty 0.0: ~75% of wall cells are holes
+    # At difficulty 1.0: ~10% of wall cells are holes
+    hole_percentage = 0.75 - 0.65 * difficulty
+    holes_per_wall = max(1, int(hole_percentage * size))
+    
+    # Create holes in each wall column
+    for col in range(1, size, 2):
+        # Select random positions for holes
+        hole_positions = np.random.choice(size, holes_per_wall, replace=False)
+        grid[hole_positions, col] = 0
+    
+    # Ensure goal is accessible
+    grid[-1, -1] = 0
+    
+    # If there's a wall in the second-to-last column, ensure path to goal
+    if size % 2 == 0:  # When size is even, second-to-last column has a wall
+        grid[-1, -2] = 0
+    
+    return grid
+
 if __name__ == "__main__":
     #  maze = generate_maze(16)
-    maze = generate_simple_maze(8)
+    maze = generate_easy_maze(8, 0.4)
 
     print(maze)
     import matplotlib.pyplot as plt

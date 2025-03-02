@@ -20,6 +20,10 @@ where the guy has been or something
    this could look like having mazes which are mostly empty to
    start with :)
 
+
+7. reward exploration for reals -- keep track of recently visited
+   states, reward visiting new ones
+
 ---
 
 oh dear. 
@@ -33,3 +37,5 @@ oh apparently a pretty principled way to do reward shaping is
 by adding $\gamma*\phi(S_{t+1}) - \phi(S_t)$.
 Like this does not change $\argmax_\theta \E_{\tau\sim \pi_\theta} \sum_{t=0}^{T} \gamma^{t}r_t$ 
 if the start and ending states are fixed.
+
+
