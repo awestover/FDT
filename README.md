@@ -41,9 +41,8 @@ if the start and ending states are fixed.
 
 ---
 
-```
-git clone https://github.com/awestover/FDT
-pip install -r requirements.txt
+```bash
+git clone https://github.com/awestover/FDT; cd FDT; pip install -r requirements.txt
 ```
 
 
