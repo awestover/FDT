@@ -1,4 +1,4 @@
-import numpy as np
+import numpy as np  # isn't it kind of weird to have both numpy and torch
 import random
 import torch
 import torch.nn as nn
@@ -11,95 +11,31 @@ GRID_SIZE = 8
 
 
 class GridWorldEnv:
-    """
-    Environment representing a grid world with visitation tracking.
-
-    The grid consists of:
-        0: empty cell (agent can move here)
-        1: blocked cell (wall)
-        2: the agent's current position
-        3: the goal position
-
-    The agent can take one of four actions:
-        0: move up
-        1: move down
-        2: move left
-        3: move right
-
-    This enhanced version keeps track of where the agent has been and penalizes
-    revisiting states to encourage exploration of new areas.
-    """
-
-    def __init__(self, max_steps=200, revisit_penalty_factor=0.2, decay_rate=0.95):
-        """
-        Initialize the GridWorld environment.
-
-        Args:
-            max_steps (int): Maximum number of steps allowed per episode.
-            revisit_penalty_factor (float): Factor to multiply the visitation count for penalties.
-            decay_rate (float): Rate at which visitation counts decay over time.
-        """
+    def __init__(self, max_steps):
         self.max_steps = max_steps
-        self.action_space = 4  # 0: up, 1: down, 2: left, 3: right
-        self.revisit_penalty_factor = revisit_penalty_factor
-        self.decay_rate = decay_rate
         self.grid_size = GRID_SIZE
+        self.move_map = {
+            0: (-1, 0),  # up
+            1: (1, 0),  # down
+            2: (0, -1),  # left
+            3: (0, 1),  # right
+        }
+        self.grid = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.int8)
+        self.visit_count = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.int16)
         self.reset()
 
     def reset(self):
-        """
-        Reset the environment to the initial state.
-
-        Returns:
-            np.ndarray: A copy of the initial grid state.
-        """
-        self.grid = generate_maze(GRID_SIZE)
-
-        # Place the agent (2) at a fixed starting position (top-left)
+        generate_maze(GRID_SIZE, buffer=self.grid)
         self.agent_pos = (0, 0)
         self.grid[self.agent_pos] = 2
-
-        # Place the goal (3) at a fixed location (bottom-right)
         self.goal_pos = (GRID_SIZE - 1, GRID_SIZE - 1)
         self.grid[self.goal_pos] = 3
-
-        # Initialize visitation map - tracks how many times agent has visited each cell
-        self.visit_count = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
-
-        # Mark the initial position as visited
-        self.visit_count[self.agent_pos] = 1.0
-
         self.steps = 0
+        self.visit_count.zero_()
         return self.get_state()
 
     def get_state(self):
-        """
-        Get the current state of the grid.
-
-        Returns:
-            np.ndarray: A copy of the current grid state.
-        """
         return self.grid.copy()
-
-    def get_visit_map(self):
-        """
-        Get the current visitation map.
-
-        Returns:
-            np.ndarray: A normalized copy of the current visitation map.
-        """
-        # Normalize the visit count for visualization if needed
-        if np.max(self.visit_count) > 0:
-            normalized_map = self.visit_count / np.max(self.visit_count)
-        else:
-            normalized_map = self.visit_count
-        return normalized_map
-
-    def decay_visit_counts(self):
-        """
-        Decay all visit counts by the decay rate to gradually forget old visits.
-        """
-        self.visit_count *= self.decay_rate
 
     def step(self, action, gamma=0.99):
         """
@@ -122,133 +58,11 @@ class GridWorldEnv:
             return self.get_state(), 0, True
 
         # Constants for rewards
-        INVALID_PENALTY = -2
-        WIN_BONUS = 2 * self.max_steps
+        INVALID_PENALTY = 1
+        SLOW_PENALTY = 1
+        REVISIT_PENALTY = 1
 
         # Map action to movement (row, col)
-        move_map = {
-            0: (-1, 0),  # up
-            1: (1, 0),  # down
-            2: (0, -1),  # left
-            3: (0, 1),  # right
-        }
-        dr, dc = move_map[action]
-        r, c = self.agent_pos
-        new_r, new_c = r + dr, c + dc
-
-        # Check for out-of-bounds or hitting a wall (cell==1)
-        if (
-            new_r < 0
-            or new_r >= GRID_SIZE
-            or new_c < 0
-            or new_c >= GRID_SIZE
-            or self.grid[new_r, new_c] == 1
-        ):
-            return self.get_state(), INVALID_PENALTY, False
-
-        # Valid move: update the grid
-        old_dist = self.dist_to_goal()
-        self.agent_pos = (new_r, new_c)
-        new_dist = self.dist_to_goal()
-        self.grid[r, c] = 0
-        self.grid[new_r, new_c] = 2
-
-        # Check if goal reached
-        done = (new_r, new_c) == self.goal_pos
-
-        # Calculate revisit penalty based on the visit count at the new position
-        revisit_penalty = self.revisit_penalty_factor * self.visit_count[new_r, new_c]
-
-        # Update visitation count for the new position
-        self.visit_count[new_r, new_c] += 1.0
-
-        # Decay visit counts slightly each step to gradually forget old visits
-        self.decay_visit_counts()
-
-        if done:
-            reward = WIN_BONUS  # Big reward for reaching goal
-        else:
-            # Base reward from distance change plus a penalty for revisits
-            reward = old_dist - gamma * new_dist - revisit_penalty
-
-        return self.get_state(), reward, done
-
-    def dist_to_goal(self):
-        """
-        Calculate Manhattan distance from current position to goal.
-
-        Returns:
-            float: Manhattan distance to the goal.
-        """
-        r, c = self.agent_pos
-        gr, gc = self.goal_pos
-        return abs(gr - r) + abs(gc - c)
-
-    def render(self):
-        """
-        Print a text representation of the grid to stdout.
-        """
-        for row in self.grid:
-            print(" ".join(str(int(cell)) for cell in row))
-
-    def render_visits(self):
-        """
-        Print a text representation of the visitation map to stdout.
-        """
-        visit_map = self.get_visit_map()
-        for row in visit_map:
-            print(" ".join(f"{cell:.1f}" for cell in row))
-
-
-class OptimizedGridWorldEnv(GridWorldEnv):
-    """
-    Optimized version of the GridWorld environment with pre-allocated arrays
-    to reduce memory allocation overhead during training.
-    """
-
-    def __init__(self, max_steps=200, revisit_penalty_factor=0.2, decay_rate=0.95):
-        # Pre-allocate arrays for state representation
-        self._state_buffer = np.zeros((GRID_SIZE, GRID_SIZE), dtype=np.float32)
-
-        super(OptimizedGridWorldEnv, self).__init__(
-            max_steps=max_steps,
-            revisit_penalty_factor=revisit_penalty_factor,
-            decay_rate=decay_rate,
-        )
-
-        # Movement action mapping
-        self.move_map = {
-            0: (-1, 0),  # up
-            1: (1, 0),  # down
-            2: (0, -1),  # left
-            3: (0, 1),  # right
-        }
-
-    def get_state(self):
-        """
-        Get the current state using a pre-allocated buffer.
-
-        Returns:
-            np.ndarray: A copy of the current grid state.
-        """
-        np.copyto(self._state_buffer, self.grid)
-        return self._state_buffer
-
-    def step(self, action, gamma=0.99):
-        """
-        Optimized step function with reduced memory allocations.
-        """
-        self.steps += 1
-
-        # Check if episode has exceeded maximum steps
-        if self.steps >= self.max_steps:
-            return self.get_state(), 0, True
-
-        # Constants for rewards
-        INVALID_PENALTY = -2
-        WIN_BONUS = 2 * self.max_steps
-
-        # Get movement direction
         dr, dc = self.move_map[action]
         r, c = self.agent_pos
         new_r, new_c = r + dr, c + dc
@@ -261,86 +75,53 @@ class OptimizedGridWorldEnv(GridWorldEnv):
             or new_c >= GRID_SIZE
             or self.grid[new_r, new_c] == 1
         ):
-            return self.get_state(), INVALID_PENALTY, False
+            return self.get_state(), -INVALID_PENALTY, False
 
-        # Valid move: update the grid
-        old_dist = self.dist_to_goal()
         self.agent_pos = (new_r, new_c)
-        new_dist = self.dist_to_goal()
         self.grid[r, c] = 0
         self.grid[new_r, new_c] = 2
-
-        # Check if goal reached
         done = (new_r, new_c) == self.goal_pos
-
-        # Calculate revisit penalty based on the visit count at the new position
-        revisit_penalty = self.revisit_penalty_factor * self.visit_count[new_r, new_c]
-
-        # Update visitation count for the new position
-        self.visit_count[new_r, new_c] += 1.0
-
-        # Decay visit counts slightly each step to gradually forget old visits
-        self.decay_visit_counts()
-
-        if done:
-            reward = WIN_BONUS  # Big reward for reaching goal
-        else:
-            # Base reward from distance change plus a penalty for revisits
-            reward = old_dist - gamma * new_dist - revisit_penalty
-
+        self.visit_count[new_r, new_c] += 1
+        reward = -REVISIT_PENALTY * self.visit_count[new_r, new_c] - SLOW_PENALTY
         return self.get_state(), reward, done
-
-    def dist_to_goal(self):
-        """
-        Optimized Manhattan distance calculation.
-        """
-        r, c = self.agent_pos
-        gr, gc = self.goal_pos
-        return abs(gr - r) + abs(gc - c)
 
 
 class DQN(nn.Module):
-    """
-    A simplified DQN that removes recurrent components and complex architecture.
-    This network takes a grid state and directly predicts Q-values with minimal processing.
-    """
-
     def __init__(self, input_channels, num_actions):
-        super(DQN, self).__init__()
+        # Calculate the feature size after convolutions and pooling
+        feature_size = ((GRID_SIZE // 4) ** 2) * 4 * input_channels
 
-        #  convolutional layers without batch normalization
-        self.conv1 = nn.Conv2d(input_channels, 16, kernel_size=3, stride=1, padding=1)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
+        # CNN layers
+        self.cnn_layers = nn.Sequential(
+            # First block: 4 → 8 channels, gs → gs/2
+            nn.Conv2d(input_channels, 2 * input_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(2 * input_channels),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            # Second block: 8 → 16 channels, gs/2 → gs/4
+            nn.Conv2d(2 * input_channels, 4 * input_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(4 * input_channels),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+        )
 
-        # Calculate CNN output size
-        cnn_output_size = 32 * GRID_SIZE * GRID_SIZE
-
-        #  fully connected layers
-        self.fc1 = nn.Linear(cnn_output_size, 128)
-        self.fc2 = nn.Linear(128, num_actions)
+        # MLP layers
+        self.mlp = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(feature_size, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, num_actions),
+            nn.Softmax(dim=1),
+        )
 
     def forward(self, x):
-        """
-        Forward pass of the simplified DQN.
-
-        Args:
-            x: Input tensor of shape (batch_size, channels, height, width)
-
-        Returns:
-            q_values: Action values
-        """
-        # CNN Layers
-        x = F.relu(self.conv1(x))
-        x = F.relu(self.conv2(x))
-
-        # Flatten
-        x = x.view(x.size(0), -1)
-
-        # Fully connected layers
-        x = F.relu(self.fc1(x))
-        q_values = self.fc2(x)
-
-        return q_values
+        x = self.cnn_layers(x)
+        x = self.mlp(x)
+        return x
 
 
 class DQNAgent:
