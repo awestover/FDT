@@ -134,6 +134,7 @@ class GridWorldEnv:
             print(" ".join(str(int(cell)) for cell in row))
 
 
+
 class DQN(nn.Module):
     """
      DQN architecture that can remember past states using LSTM layers.
@@ -208,7 +209,7 @@ class DQN(nn.Module):
         else:
             # Already a sequence
             single_state = False
-            batch_size, seq_len = x.size(0), x.size(1)
+            batch_size = x.size(0)
         
         # Get sequence dimensions
         seq_len = x.size(1)
@@ -252,7 +253,7 @@ class DQN(nn.Module):
         
         return q_values, new_hidden_state
 
-# Modified agent class to handle recurrent network
+
 class DQNAgent:
     """
     DQN Agent using a recurrent neural network to maintain memory of past states.
@@ -362,23 +363,29 @@ class DQNAgent:
             return random.randrange(self.num_actions)
         else:
             # Exploit - use the recurrent network to make prediction based on history
-            # The network needs a sequence of states
             with torch.no_grad():
-                # Get the most recent states from the buffer to form a sequence
-                state_sequence = self.replay_buffer.get_recent_states(current_state)
+                # For the initial states, just use the current state
+                if not hasattr(self, 'state_sequence') or self.state_sequence is None:
+                    self.state_sequence = []
                 
-                # If we have enough states in the buffer
-                if state_sequence is not None:
-                    # Process sequence to get Q-values
-                    state_tensors = [self.preprocess(s) for s in state_sequence]
-                    state_batch = torch.cat(state_tensors, dim=1)  # Concat along sequence dimension
-                    
-                    q_values, self.hidden_state = self.policy_net(state_batch, self.hidden_state)
-                    return q_values.max(1)[1].item()
-                else:
-                    # Not enough history yet, just process current state
+                # Add current state to sequence
+                self.state_sequence.append(current_state_tensor)
+                
+                # Maintain fixed sequence length
+                if len(self.state_sequence) > self.sequence_length:
+                    self.state_sequence.pop(0)
+                
+                # If we don't have enough states yet, just use the current state
+                if len(self.state_sequence) < 2:
                     q_values, self.hidden_state = self.policy_net(current_state_tensor, self.hidden_state)
-                    return q_values.max(1)[1].item()
+                else:
+                    # Stack states along batch dimension first
+                    batch_states = torch.cat(self.state_sequence, dim=0)
+                    # Then reshape to (1, seq_len, channels, height, width)
+                    batch_states = batch_states.unsqueeze(0)
+                    q_values, self.hidden_state = self.policy_net(batch_states, self.hidden_state)
+                
+                return q_values.max(1)[1].item()
     
     def update(self):
         """
@@ -413,11 +420,11 @@ class DQNAgent:
             reward_batch_t = torch.tensor(rewards_t, dtype=torch.float32)
             done_batch_t = torch.tensor(dones_t, dtype=torch.float32)
             
-            # Get current Q values
+            # Get current Q values - for now, treat each state independently
             current_q_values, _ = self.policy_net(state_batch_t)
             current_q_values = current_q_values.gather(1, action_batch_t)
             
-            # Compute target Q values (Double DQN approach)
+            # Compute target Q values
             with torch.no_grad():
                 # Get actions from policy net
                 next_actions, _ = self.policy_net(next_state_batch_t)
@@ -473,6 +480,7 @@ class DQNAgent:
         Reset the LSTM hidden state at the beginning of an episode.
         """
         self.hidden_state = None
+        self.state_sequence = None
     
     def zero_epsilon(self):
         self.epsilon = 0
@@ -539,28 +547,10 @@ class ReplayBuffer:
         
         return state_sequences, action_sequences, reward_sequences, next_state_sequences, done_sequences
     
-    def get_recent_states(self, current_state):
-        """
-        Get the most recent states from the episode buffer to form a sequence.
-        Used for action selection during training.
-        """
-        if not self.episode_buffer:
-            return None
-        
-        # Get the most recent states
-        recent_states = [transition[0] for transition in self.episode_buffer[-self.sequence_length + 1:]]
-        
-        # If we don't have enough states, pad with the earliest state we have
-        if len(recent_states) < self.sequence_length - 1:
-            padding = [self.episode_buffer[0][0]] * (self.sequence_length - 1 - len(recent_states))
-            recent_states = padding + recent_states
-        
-        # Add the current state
-        recent_states.append(current_state)
-        
-        return recent_states
-    
     def __len__(self):
+        """
+        Return current buffer size.
+        """
         return len(self.buffer)
 
 #  # --- Modified DQN Network Definition ---
