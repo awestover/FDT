@@ -160,8 +160,7 @@ def main():
             # For evaluation, use the final difficulty but vary start distances
             for i in range(5):  # Run 5 evaluation episodes
                 # Use different start distances for evaluation
-                eval_start_distance = 0.2 * (i + 1)  # 0.2, 0.4, 0.6, 0.8, 1.0
-                eval_state = env.reset(final_difficulty, eval_start_distance)
+                eval_state = env.reset(cur_difficulty, cur_dist_to_end)
                 eval_reward = 0
                 eval_done = False
                 eval_steps = 0
