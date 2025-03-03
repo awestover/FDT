@@ -25,14 +25,15 @@ def main():
     # Curriculum learning parameters
     initial_difficulty = 0.5  # Start with very easy mazes
     final_difficulty = 0.8  # End with challenging mazes
-    init_dist_to_end = 1.0  # Start with short distance to end
+    init_dist_to_end = 0.5  # Start with short distance to end
     final_dist_to_end = 1.0 # End with long distance to end
 
     # Enable CUDA benchmarking to optimize CUDA operations
     torch.backends.cudnn.benchmark = True
 
     # Use GPU if available
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ON_GPU = torch.cuda.is_available()
+    device = torch.device("cuda" if ON_GPU else "cpu")
     print(f"Using device: {device}")
 
     # Create checkpoints directory
@@ -42,7 +43,8 @@ def main():
     env = GridWorldEnv(device, max_steps=100)  # Using our new curriculum environment
 
     # TODO: increase batch size to as big as the GPU can handle
-    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=1024, update_target_every=500)
+    BSZ = 1024 if ON_GPU else 64
+    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=BSZ, update_target_every=500)
 
     # Tracking variables
     episode_lengths = []

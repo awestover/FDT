@@ -182,50 +182,56 @@ class DQN(nn.Module):
 # -----------------------
 
 class TensorReplayBuffer:
-    """
-    Replay buffer optimized for storing torch tensors directly.
-    """
-    def __init__(self, capacity, device):
+    def __init__(self, capacity, state_shape, device):
         self.capacity = capacity
         self.device = device
-        self.buffer = []
         self.position = 0
-
+        self.size = 0
+        
+        # Pre-allocate tensors for all storage
+        self.states = torch.zeros((capacity, *state_shape), dtype=DTYPE, device=device)
+        self.actions = torch.zeros((capacity, 1), dtype=torch.long, device=device)
+        self.rewards = torch.zeros((capacity, 1), dtype=DTYPE, device=device)
+        self.next_states = torch.zeros((capacity, *state_shape), dtype=DTYPE, device=device)
+        self.dones = torch.zeros((capacity, 1), dtype=torch.bool, device=device)
+        
     def push(self, state, action, reward, next_state, done):
         """Store a transition in the buffer."""
-        if len(self.buffer) < self.capacity:
-            self.buffer.append(None)
-            
-        # Ensure action, reward, and done are tensors
+        # Convert inputs to tensors if needed
         if not isinstance(action, torch.Tensor):
-            action = torch.tensor([action], device=self.device)
+            action = torch.tensor([action], device=self.device, dtype=torch.long)
         if not isinstance(reward, torch.Tensor):
-            reward = torch.tensor([reward], dtype=torch.float, device=self.device)
+            reward = torch.tensor([reward], dtype=DTYPE, device=self.device)
         if not isinstance(done, torch.Tensor):
             done = torch.tensor([done], dtype=torch.bool, device=self.device)
             
-        self.buffer[self.position] = (state, action, reward, next_state, done)
+        # Store directly in pre-allocated tensors
+        self.states[self.position] = state
+        self.actions[self.position, 0] = action
+        self.rewards[self.position, 0] = reward
+        self.next_states[self.position] = next_state
+        self.dones[self.position, 0] = done
+        
+        # Update position and size
         self.position = (self.position + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
 
     def sample(self, batch_size):
-        """Sample a batch of transitions from the buffer."""
-        batch_indices = nprand.choice(len(self.buffer), min(batch_size, len(self.buffer)), replace=False)
-        batch = [self.buffer[i] for i in batch_indices]
-
-        state, action, reward, next_state, done = zip(*batch)
+        """Sample a batch of transitions from the buffer efficiently."""
+        batch_size = min(batch_size, self.size)
+        batch_indices = torch.randint(0, self.size, (batch_size,), device=self.device)
         
-        # Stack the tensors
-        state_batch = torch.cat([s.unsqueeze(0) for s in state], dim=0)
-        action_batch = torch.cat([a for a in action], dim=0)
-        reward_batch = torch.cat([r for r in reward], dim=0)
-        next_state_batch = torch.cat([s.unsqueeze(0) for s in next_state], dim=0)
-        done_batch = torch.cat([d for d in done], dim=0)
-        
-        return state_batch, action_batch, reward_batch, next_state_batch, done_batch
+        # Index directly from pre-allocated tensors
+        return (
+            self.states[batch_indices],
+            self.actions[batch_indices].squeeze(1),  # Remove extra dimension
+            self.rewards[batch_indices].squeeze(1),  # Remove extra dimension
+            self.next_states[batch_indices],
+            self.dones[batch_indices].squeeze(1)     # Remove extra dimension
+        )
 
     def __len__(self):
-        return len(self.buffer)
-
+        return self.size
 
 class DQNAgent:
     def __init__(self, device, lr, gamma, buffer_capacity, batch_size, update_target_every):
@@ -251,48 +257,54 @@ class DQNAgent:
         self.optimizer = optim.Adam(self.policy_net.parameters(), lr=lr)
 
         # Experience replay buffer
-        self.replay_buffer = TensorReplayBuffer(buffer_capacity, self.device)
+        state_shape = (2, GRID_SIZE, GRID_SIZE)
+        self.replay_buffer = TensorReplayBuffer(buffer_capacity, state_shape, self.device)
 
         # Exploration parameters
         self.epsilon = 1.0
         self.epsilon_min = 0.05
         self.epsilon_decay = 0.998
 
+
+    # Optimized select_action method to reduce unsqueeze operations
     def select_action(self, state):
         """
         Select an action using epsilon-greedy policy based on current state.
-        Expects state to be a tensor already.
+        Expects state to be a tensor already and reduces unsqueeze operations.
         """
-
         # If we're exploring
         if nprand.rand() < self.epsilon:
             return nprand.randint(self.num_actions)
         else:
             with torch.no_grad():
-                q_values = self.policy_net(state.unsqueeze(0))
-                return q_values.max(1)[1].item()
+                # Ensure state has batch dimension without using unsqueeze if possible
+                if state.dim() == 3:
+                    state = state.unsqueeze(0)  # Only call unsqueeze once if needed
+                    q_values = self.policy_net(state)
+                    return q_values.max(1)[1].item()
 
+
+    # Optimized update method to reduce tensor operations
     def update(self):
         """
-        Update network weights using experiences from the buffer.
+        Update network weights using experiences from the buffer with reduced tensor operations.
         """
         if len(self.replay_buffer) < self.batch_size:
             return None
 
-        # Sample batch
+        # Sample batch - now returns tensors without cat/unsqueeze operations
         state_batch, action_batch, reward_batch, next_state_batch, done_batch = self.replay_buffer.sample(self.batch_size)
 
-        # Current Q values
-        current_q_values = self.policy_net(state_batch).gather(1, action_batch.unsqueeze(1))
+        # Current Q values - action_batch already shaped correctly
+        current_q_values = self.policy_net(state_batch).gather(1, action_batch.unsqueeze(1)).squeeze(1)
 
-        # Compute target Q values
+        # Compute target Q values more efficiently
         with torch.no_grad():
-            next_actions = self.policy_net(next_state_batch).max(1)[1].unsqueeze(1)
-            next_q_values = self.target_net(next_state_batch).gather(1, next_actions)
-            target_q_values = reward_batch.unsqueeze(1) + self.gamma * next_q_values * (~done_batch.unsqueeze(1))
+            next_actions = self.policy_net(next_state_batch).max(1)[1]
+            next_q_values = self.target_net(next_state_batch).gather(1, next_actions.unsqueeze(1)).squeeze(1)
+            target_q_values = reward_batch + self.gamma * next_q_values * (~done_batch)
 
-        # loss = |r + gamma * Qtarget(s',a') - Qpolicy(s,a)|
-        # ie get better at predicting how good s,a pairs are
+        # Compute loss without unnecessary reshaping
         loss = F.smooth_l1_loss(current_q_values, target_q_values)
 
         # Optimize the model
@@ -309,5 +321,5 @@ class DQNAgent:
         return loss.item()
 
     def set_epsilon(self, episode, total_episodes):
-        self.epsilon = self.epsilon_min + (1.0 - self.epsilon_min) * exp(-3.0 * episode / total_episodes)
+        self.epsilon = self.epsilon_min + .8*(1.0 - self.epsilon_min) * exp(-3.0 * episode / total_episodes)
 

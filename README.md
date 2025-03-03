@@ -44,7 +44,11 @@ if the start and ending states are fixed.
 ---
 
 ```bash
-git clone https://github.com/awestover/FDT; cd FDT; pip install torch; pip install numpy
+# good gpu:
+git clone https://github.com/awestover/FDT; cd FDT; python main.py
+
+# cheap gpu: 
+git clone https://github.com/awestover/FDT; cd FDT; pip install torch; pip install numpy; python main.py
 ```
 
 
