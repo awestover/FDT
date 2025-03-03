@@ -65,7 +65,7 @@ class GridWorldEnv:
         self.visit_count = torch.zeros((GRID_SIZE, GRID_SIZE), dtype=torch.int16, device=self.device)
         self.reset()
 
-    def reset(self, maze_difficulty=0.5, dist_to_end=0.2):
+    def reset(self, maze_difficulty=0.5, dist_to_end=1.0):
         """Reset the environment with the given difficulty."""
         generate_maze(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
 

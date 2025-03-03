@@ -93,10 +93,12 @@ def main():
             steps += 1
 
         # Batch learning after episode completion
-        for _ in range(min(4, len(transitions))):
+        target_upated = False
+        for _ in transitions:
             loss = agent.update()
             if loss is not None:
                 losses.append(loss)
+            target_updated = target_upated or (agent.steps_done % agent.update_target_every == 0)
 
         # Calculate metrics
         episode_lengths.append(steps)
@@ -125,7 +127,8 @@ def main():
                 episode_reward,
                 steps,
                 episode_loss if losses else None,
-                agent.epsilon
+                agent.epsilon,
+                target_upated=target_upated
             )
 
         #  Save checkpoint

@@ -4,6 +4,11 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from deps import *
 
+"""
+TODO: there is some horrible bug in this code.
+"""
+
+
 #  def create_movie(env, agent, ax, movie_filename='agent_journey.mp4'):
 #      frames = []
 #      for i in range(4):

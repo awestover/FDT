@@ -24,7 +24,8 @@ def setup_plotting():
     axes[1].set_title("Episode Lengths")
     axes[1].set_xlabel("Episode")
     axes[1].set_ylabel("Steps")
-    (length_line,) = axes[1].plot([], [], "g-")
+    length_scatter = axes[1].scatter([], [], color="g", s=10, alpha=0.6)
+
 
     axes[2].set_title("Training Loss")
     axes[2].set_xlabel("Episode")
@@ -60,6 +61,7 @@ def setup_plotting():
             "loss": loss_line,
             "epsilon": eps_line,
             "eval_scatter": eval_scatter,
+            "length_scatter": length_scatter
         },
         "data": data,
     }
@@ -76,6 +78,7 @@ def update_plots(
     epsilon,
     is_eval=False,
     eval_reward=None,
+    target_update=False,
 ):
     """
     Update the interactive plots with new data.
@@ -107,6 +110,10 @@ def update_plots(
         # Update line plots
         lines["reward"].set_data(data["episodes"], data["rewards"])
         lines["length"].set_data(data["episodes"], data["lengths"])
+        # Update length scatter plot
+        lines["length_scatter"].set_offsets(
+            np.column_stack((data["episodes"], data["lengths"]))
+        )
 
         if data["losses"]:
             lines["loss"].set_data(
@@ -114,6 +121,12 @@ def update_plots(
             )
 
         lines["epsilon"].set_data(data["episodes"], data["epsilons"])
+
+        # Add vertical line for target network update
+        if target_update and len(data["losses"]) > 0:
+            loss_ax = axes[2]
+            loss_ax.axvline(x=episode, color='purple', linestyle='--', alpha=0.7, linewidth=0.8)
+
 
     # Update evaluation scatter plot
     else:
