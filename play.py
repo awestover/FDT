@@ -4,10 +4,9 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
 from deps import *
 
-"""
-TODO: there is some horrible bug in this code.
-"""
-
+#  CHECKPOINT = "gpubro"
+#  CHECKPOINT = "ultimate12"
+CHECKPOINT = "fancy"
 
 #  def create_movie(env, agent, ax, movie_filename='agent_journey.mp4'):
 #      frames = []
@@ -72,25 +71,26 @@ def tensor_to_numpy_grid(tensor):
 
 
 def play_agent(env, agent, ax):
-    state = env.reset()
-    for i in range(40):
+    state = env.reset(maze_difficulty=0.7, dist_to_end=0.7)
+    for i in range(90):
         action = agent.select_action(state)
-        print(env.move_map[action])
         next_state, reward, done = env.step(action)
         state = next_state
-        if done:
-            break
         ax.clear()
         ax.imshow(tensor_to_numpy_grid(state))
         ax.set_title(f"Step {i}")
-        plt.pause(.03)
+        if done:
+            plt.pause(.4)
+            break
+        else:
+            plt.pause(.03)
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = GridWorldEnv(device, max_steps=100)
     agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=64, update_target_every=200)
-    checkpoint_path = 'checkpoints/checkpoint_10000.pth'
-    checkpoint = torch.load(checkpoint_path, weights_only=True) # weights_only=False if it's broken
+    checkpoint_path = f"checkpoints/{CHECKPOINT}.pth"
+    checkpoint = torch.load(checkpoint_path, weights_only=True, map_location=torch.device('cpu')) # weights_only=False if it's broken
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
     agent.epsilon = 0.1
     print(f"Checkpoint loaded from {checkpoint_path}")
@@ -101,7 +101,7 @@ if __name__ == '__main__':
     ax.set_xticklabels([])
     ax.set_yticklabels([])
 
-    for i in range(10):
+    for i in range(100):
         print("episode ", i)
         play_agent(env, agent, ax)
 

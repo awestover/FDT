@@ -71,3 +71,32 @@ p.sort_stats('cumulative').print_stats(30)
 ```
 wow this code was useful!
 
+
+
+----
+
+
+## update
+
+- It's kind of working now!
+- I think the ciriculum learning thing was super **key**.
+
+- I'm somewhat interested in trying 
+  - slightly harder mazes
+  - limiting the visual field of the agent and then using a much smaller network 
+    - (probably just an MLP at that point, not a CNN)
+
+- Note: if it ends up being too slow and profile shows that generating mazes is a bottleneck, we can try generating them in batches
+
+- But I'll note that this setting seems like it was probably too complex to get the FDT thing working
+
+
+----
+
+plan now:
+
+1. try trainig the big network on tricky mazes 
+(if it looks slow, can spend a sec on optimizing it)
+
+2. then we should probably call it a day on this guy
+

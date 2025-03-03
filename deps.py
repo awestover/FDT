@@ -3,6 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from numpy import random as nprand
+from random import random as rand
 from math import exp
 GRID_SIZE = 8
 DTYPE = torch.float32
@@ -40,6 +41,131 @@ def generate_maze(buffer, device, nchannels=2, size=16, difficulty=0.5):
         one_hot[0, -1, -2] = 0
     return one_hot
 
+def fancy_generate_maze(buffer, device, nchannels=2, size=16, difficulty=0.5):
+    """
+    Generate a guaranteed solvable maze as a one-hot encoded tensor.
+    Includes a direct path from start to finish through waypoints.
+    
+    Args:
+        buffer: Optional pre-allocated tensor to write into
+        device: The torch device to place the tensor on
+        nchannels (int): Number of channels for one-hot encoding
+        size (int): Size of the maze (size x size grid)
+        difficulty (float): Value between 0.0 and 1.0 controlling maze complexity
+    
+    Returns:
+        torch.Tensor: One-hot encoded maze of shape [nchannels, size, size]
+    """
+    import torch
+    
+    # Initialize the output tensor
+    one_hot = buffer
+    if one_hot is None:
+        one_hot = torch.zeros((nchannels, size, size), dtype=torch.float32, device=device)
+    else:
+        one_hot.zero_()
+    
+    # Start with a maze of all walls (1s)
+    one_hot[0, :, :] = 1.0
+    
+    # Clear specific cells to form a grid pattern where every other cell is a path
+    for i in range(size):
+        for j in range(size):
+            if i % 2 == 0 and j % 2 == 0:
+                one_hot[0, i, j] = 0  # Clear paths at even coordinates
+    
+    # Create a guaranteed path from start to finish using waypoints
+    # Define waypoints from start to finish
+    num_waypoints = 3 + int(difficulty * 3)  # More waypoints for higher difficulty
+    
+    # Start and end points
+    waypoints = [(0, 0)]  # Start at top-left
+    
+    # Generate intermediate waypoints
+    for i in range(num_waypoints):
+        # Create waypoint coordinates that progress toward the goal
+        # Use rand() from the imported library instead of torch.rand()
+        progress = (i + 1) / (num_waypoints + 1)
+        
+        # Mix randomness with progression toward goal
+        # More difficulty = more random waypoints
+        random_factor = difficulty * 0.4
+        progress_factor = 1.0 - random_factor
+        
+        # Calculate waypoint position
+        wp_y = int((rand() * random_factor + progress * progress_factor) * (size - 1))
+        wp_x = int((rand() * random_factor + progress * progress_factor) * (size - 1))
+        
+        # Ensure waypoints are on valid path cells (even coordinates)
+        wp_y = (wp_y // 2) * 2  # Round to even
+        wp_x = (wp_x // 2) * 2  # Round to even
+        
+        waypoints.append((wp_y, wp_x))
+    
+    # Add the end point
+    waypoints.append((size - 1, size - 1))
+    
+    # Connect the waypoints with straight paths
+    for i in range(len(waypoints) - 1):
+        y1, x1 = waypoints[i]
+        y2, x2 = waypoints[i + 1]
+        
+        # Connect horizontally first, then vertically
+        # Create horizontal path
+        x_start, x_end = min(x1, x2), max(x1, x2)
+        for x in range(x_start, x_end + 1):
+            one_hot[0, y1, x] = 0
+        
+        # Create vertical path
+        y_start, y_end = min(y1, y2), max(y1, y2)
+        for y in range(y_start, y_end + 1):
+            one_hot[0, y, x_end] = 0
+    
+    # Now connect neighboring paths based on difficulty
+    # Higher difficulty = fewer connections = more complex maze
+    connect_chance = 0.7 - 0.5 * difficulty  # Scale from 0.7 (easy) to 0.2 (hard)
+    
+    # For each path cell, randomly connect to either north or east neighbor
+    for i in range(0, size-2, 2):  # Step by 2 to hit only path cells
+        for j in range(0, size-2, 2):
+            # Each cell gets one random connection (north or east)
+            if rand() < 0.5 and i > 0:  # Connect north
+                one_hot[0, i-1, j] = 0
+            else:  # Connect east
+                one_hot[0, i, j+1] = 0
+    
+    # Add more connections based on difficulty (for a more interesting maze)
+    # Lower difficulty = more connections
+    for i in range(0, size-2, 2):
+        for j in range(0, size-2, 2):
+            # Add extra connections with probability based on difficulty
+            if rand() < connect_chance:
+                # Pick a random direction
+                direction = int(rand() * 4)
+                
+                if direction == 0 and i > 0:  # North
+                    one_hot[0, i-1, j] = 0
+                elif direction == 1 and j < size-1:  # East
+                    one_hot[0, i, j+1] = 0
+                elif direction == 2 and i < size-1:  # South
+                    one_hot[0, i+1, j] = 0
+                elif direction == 3 and j > 0:  # West
+                    one_hot[0, i, j-1] = 0
+    
+    # Clear the entrance and exit
+    one_hot[0, 0, 0] = 0  # Entrance (top-left)
+    one_hot[0, size-1, size-1] = 0  # Exit (bottom-right)
+    
+    # Clean up the path to entrance/exit
+    if size > 1:
+        one_hot[0, 0, 1] = 0  # Clear path right of entrance
+        one_hot[0, 1, 0] = 0  # Clear path below entrance
+        one_hot[0, size-2, size-1] = 0  # Clear path to exit
+        one_hot[0, size-1, size-2] = 0  # Clear path to exit
+    
+    return one_hot
+
+
 # -----------------------
 # ENVIRONMENT
 # -----------------------
@@ -76,8 +202,8 @@ class GridWorldEnv:
 
     def reset(self, maze_difficulty=0.5, dist_to_end=1.0):
         """Reset the environment with the given difficulty."""
-        self.grid.zero_()
-        generate_maze(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
+        #  generate_maze(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
+        fancy_generate_maze(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
         self.agent_pos = (f(dist_to_end), f(dist_to_end))
         self.grid[1, self.agent_pos[0], self.agent_pos[1]] = 1
         self.goal_pos = (GRID_SIZE - 1, GRID_SIZE - 1)
@@ -322,4 +448,12 @@ class DQNAgent:
 
     def set_epsilon(self, episode, total_episodes):
         self.epsilon = self.epsilon_min + .8*(1.0 - self.epsilon_min) * exp(-3.0 * episode / total_episodes)
+
+
+
+if __name__ == "__main__":
+    m = fancy_generate_maze(None, torch.device("cpu"))
+    import matplotlib.pyplot as plt
+    plt.imshow(m[0,:,:].numpy(), cmap='gray')
+    plt.show()
 
