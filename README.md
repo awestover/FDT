@@ -1,4 +1,4 @@
-![checkpoints/trainig_plot.png](checkpoints/trainig_plot.png)
+![checkpoints/training_plot_10000.png](checkpoints/training_plot_10000.png)
 
 Ideas for fixing this 
 
