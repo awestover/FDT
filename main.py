@@ -23,9 +23,9 @@ def main():
     checkpoint_dir = "./checkpoints"
 
     # Curriculum learning parameters
-    initial_difficulty = 0.1  # Start with very easy mazes
+    initial_difficulty = 0.5  # Start with very easy mazes
     final_difficulty = 0.8  # End with challenging mazes
-    init_dist_to_end = 0.2  # Start with short distance to end
+    init_dist_to_end = 1.0  # Start with short distance to end
     final_dist_to_end = 1.0 # End with long distance to end
 
     # Enable CUDA benchmarking to optimize CUDA operations

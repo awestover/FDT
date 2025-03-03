@@ -44,7 +44,7 @@ if the start and ending states are fixed.
 ---
 
 ```bash
-git clone https://github.com/awestover/FDT; cd FDT; pip install -r requirements.txt
+git clone https://github.com/awestover/FDT; cd FDT; pip install torch; pip install numpy
 ```
 
 
