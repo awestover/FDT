@@ -75,12 +75,18 @@ def main():
 
         # Reset states for done environments
         if dones.any():
-            # Selectively reset only the done environments
-            new_states = env.reset_subset(dones, difficulties, distances)
+            # Get new states for the done environments
+            reset_states = env.reset_subset(dones, difficulties, distances)
+
+            # Create a mask for updating only done environments
+            done_mask = dones.unsqueeze(1).unsqueeze(2).unsqueeze(3)
+
+            # Create temporary tensor with same shape as full states
+            expanded_reset_states = torch.zeros_like(states)
+            expanded_reset_states[dones] = reset_states
+
             # Update only the states that are done
-            states = torch.where(
-                dones.unsqueeze(1).unsqueeze(2).unsqueeze(3), new_states, states
-            )
+            states = torch.where(done_mask, expanded_reset_states, states)
 
     print(f"Starting training with {BSZ} parallel environments")
     print(f"Target: {NUM_EPISODES} total episodes")

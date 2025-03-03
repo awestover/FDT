@@ -172,7 +172,7 @@ def f_vectorized(d, bsz, device):
         d = torch.full((bsz,), d, dtype=DTYPE, device=device)
 
     # Create result tensor
-    result = torch.zeros(bsz, dtype=torch.int16, device=device)
+    result = torch.zeros(bsz, dtype=torch.long, device=device)
 
     # Process each element
     # Apply mask for d >= 1 (return 0)
@@ -194,7 +194,7 @@ def f_vectorized(d, bsz, device):
         clamped_values = torch.clamp(normal_values, 1, GRID_SIZE - 1)
 
         # Round to integers
-        result[mask_lt_1] = clamped_values.round().to(torch.int16)
+        result[mask_lt_1] = clamped_values.round().to(torch.long)
 
     return result
 
@@ -229,19 +229,17 @@ class GridWorldEnv:
             device=self.device,
         )
         self.visit_counts = torch.zeros(
-            (batch_size, GRID_SIZE, GRID_SIZE), dtype=torch.int16, device=self.device
+            (batch_size, GRID_SIZE, GRID_SIZE), dtype=torch.long, device=self.device
         )
 
         # Track agent positions for all environments
         self.agent_positions = torch.zeros(
-            (batch_size, 2), dtype=torch.int16, device=self.device
+            (batch_size, 2), dtype=torch.long, device=self.device
         )
         self.goal_positions = torch.full(
-            (batch_size, 2), GRID_SIZE - 1, dtype=torch.int16, device=self.device
+            (batch_size, 2), GRID_SIZE - 1, dtype=torch.long, device=self.device
         )
-        self.steps_count = torch.zeros(
-            batch_size, dtype=torch.int16, device=self.device
-        )
+        self.steps_count = torch.zeros(batch_size, dtype=torch.long, device=self.device)
 
         # Track active environments (not done yet)
         self.active_envs = torch.ones(batch_size, dtype=torch.bool, device=self.device)
@@ -357,7 +355,7 @@ class GridWorldEnv:
 
         # Compute starting positions for the reset agents
         new_positions = torch.zeros(
-            (num_to_reset, 2), dtype=torch.int16, device=self.device
+            (num_to_reset, 2), dtype=torch.long, device=self.device
         )
         new_positions[:, 0] = f_vectorized(dist_to_end, num_to_reset, self.device)
         new_positions[:, 1] = f_vectorized(dist_to_end, num_to_reset, self.device)
@@ -605,4 +603,136 @@ class BatchedDQNAgent:
         """
         self.epsilon = self.epsilon_min + 0.8 * (1.0 - self.epsilon_min) * exp(
             -3.0 * episode / total_episodes
+        )
+
+
+class DQN(nn.Module):
+    def __init__(self, input_channels, num_actions):
+        super(DQN, self).__init__()
+
+        # Calculate the feature size after convolutions and pooling
+        feature_size = ((GRID_SIZE // 4) ** 2) * 4 * input_channels
+
+        # CNN layers
+        self.cnn_layers = nn.Sequential(
+            # First block: 4 → 8 channels, gs → gs/2
+            nn.Conv2d(input_channels, 2 * input_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(2 * input_channels),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+            # Second block: 8 → 16 channels, gs/2 → gs/4
+            nn.Conv2d(2 * input_channels, 4 * input_channels, kernel_size=3, padding=1),
+            nn.BatchNorm2d(4 * input_channels),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+        )
+
+        # MLP layers
+        self.mlp = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(feature_size, 128),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Dropout(0.3),
+            nn.Linear(64, num_actions),
+        )
+
+    def forward(self, x):
+        return self.mlp(self.cnn_layers(x))
+
+
+# -----------------------
+# REPLAY BUFFER
+# -----------------------
+
+
+class TensorReplayBuffer:
+    def __init__(self, capacity, state_shape, device):
+        self.capacity = capacity
+        self.device = device
+        self.position = 0
+        self.size = 0
+
+        # Pre-allocate tensors for all storage
+        self.states = torch.zeros((capacity, *state_shape), dtype=DTYPE, device=device)
+        self.actions = torch.zeros((capacity, 1), dtype=torch.long, device=device)
+        self.rewards = torch.zeros((capacity, 1), dtype=DTYPE, device=device)
+        self.next_states = torch.zeros(
+            (capacity, *state_shape), dtype=DTYPE, device=device
+        )
+        self.dones = torch.zeros((capacity, 1), dtype=torch.bool, device=device)
+
+    def push(self, state, action, reward, next_state, done):
+        """Store a transition in the buffer."""
+        # Convert inputs to tensors if needed
+        if not isinstance(action, torch.Tensor):
+            action = torch.tensor([action], device=self.device, dtype=torch.long)
+        if not isinstance(reward, torch.Tensor):
+            reward = torch.tensor([reward], dtype=DTYPE, device=self.device)
+        if not isinstance(done, torch.Tensor):
+            done = torch.tensor([done], dtype=torch.bool, device=self.device)
+
+        # Store directly in pre-allocated tensors
+        self.states[self.position] = state
+        self.actions[self.position, 0] = action
+        self.rewards[self.position, 0] = reward
+        self.next_states[self.position] = next_state
+        self.dones[self.position, 0] = done
+
+        # Update position and size
+        self.position = (self.position + 1) % self.capacity
+        self.size = min(self.size + 1, self.capacity)
+
+    def push_batch(self, states, actions, rewards, next_states, dones):
+        """
+        Store multiple transitions in the buffer efficiently.
+
+        Args:
+            states: Batch of states [batch_size, channels, grid_size, grid_size]
+            actions: Batch of actions [batch_size]
+            rewards: Batch of rewards [batch_size]
+            next_states: Batch of next states [batch_size, channels, grid_size, grid_size]
+            dones: Batch of done flags [batch_size]
+        """
+        batch_size = len(states)
+
+        # Ensure all inputs are tensors
+        if not isinstance(actions, torch.Tensor):
+            actions = torch.tensor(actions, device=self.device, dtype=torch.long)
+        if not isinstance(rewards, torch.Tensor):
+            rewards = torch.tensor(rewards, dtype=DTYPE, device=self.device)
+        if not isinstance(dones, torch.Tensor):
+            dones = torch.tensor(dones, dtype=torch.bool, device=self.device)
+
+        # Handle wrap-around at capacity boundaries
+        positions = (
+            torch.arange(self.position, self.position + batch_size, device=self.device)
+            % self.capacity
+        )
+
+        # Store batched data with advanced indexing
+        self.states[positions] = states
+        self.actions[positions, 0] = actions
+        self.rewards[positions, 0] = rewards
+        self.next_states[positions] = next_states
+        self.dones[positions, 0] = dones
+
+        # Update position and size
+        self.position = (self.position + batch_size) % self.capacity
+        self.size = min(self.size + batch_size, self.capacity)
+
+    def sample(self, batch_size):
+        """Sample a batch of transitions from the buffer efficiently."""
+        batch_size = min(batch_size, self.size)
+        batch_indices = torch.randint(0, self.size, (batch_size,), device=self.device)
+
+        # Index directly from pre-allocated tensors
+        return (
+            self.states[batch_indices],
+            self.actions[batch_indices].squeeze(1),  # Remove extra dimension
+            self.rewards[batch_indices].squeeze(1),  # Remove extra dimension
+            self.next_states[batch_indices],
+            self.dones[batch_indices].squeeze(1),  # Remove extra dimension
         )
