@@ -44,6 +44,15 @@ def generate_maze(buffer, device, nchannels=2, size=16, difficulty=0.5):
 # ENVIRONMENT
 # -----------------------
 
+def f(d):
+    if d >= 1:
+        return 0
+    center = (1-d) * GRID_SIZE
+    std_dev = max(0.5, (1-d) * GRID_SIZE * 0.2)
+    value = nprand.normal(center, std_dev)
+    value = max(1, min(GRID_SIZE-1, value))
+    return round(value)
+
 class GridWorldEnv:
     def __init__(self, device, max_steps):
         """
@@ -67,13 +76,10 @@ class GridWorldEnv:
 
     def reset(self, maze_difficulty=0.5, dist_to_end=1.0):
         """Reset the environment with the given difficulty."""
+        self.grid.zero_()
         generate_maze(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
-
-        agentr = int(GRID_SIZE*(1 - nprand.rand()*dist_to_end))
-        agentc = int(GRID_SIZE*(1 - nprand.rand()*dist_to_end))
-        self.agent_pos = (agentr, agentc)
-
-        self.grid[1, agentr, agentc] = 1
+        self.agent_pos = (f(dist_to_end), f(dist_to_end))
+        self.grid[1, self.agent_pos[0], self.agent_pos[1]] = 1
         self.goal_pos = (GRID_SIZE - 1, GRID_SIZE - 1)
         self.steps = 0
         self.visit_count.zero_()

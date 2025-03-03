@@ -73,8 +73,9 @@ def tensor_to_numpy_grid(tensor):
 
 def play_agent(env, agent, ax):
     state = env.reset()
-    for i in range(50):
+    for i in range(40):
         action = agent.select_action(state)
+        print(env.move_map[action])
         next_state, reward, done = env.step(action)
         state = next_state
         if done:
@@ -82,7 +83,7 @@ def play_agent(env, agent, ax):
         ax.clear()
         ax.imshow(tensor_to_numpy_grid(state))
         ax.set_title(f"Step {i}")
-        plt.pause(.5)
+        plt.pause(.03)
 
 if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -100,7 +101,7 @@ if __name__ == '__main__':
     ax.set_xticklabels([])
     ax.set_yticklabels([])
 
-    for i in range(5):
+    for i in range(10):
         print("episode ", i)
         play_agent(env, agent, ax)
 
