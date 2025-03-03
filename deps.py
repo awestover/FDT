@@ -6,7 +6,7 @@ from numpy import random as nprand
 from math import exp
 GRID_SIZE = 8
 
-def generate_maze_tensor(buffer, device, nchannels=2, size=16, difficulty=0.5):
+def generate_maze(buffer, device, nchannels=2, size=16, difficulty=0.5):
     """
     Generate a maze directly as a one-hot encoded tensor with fully vectorized operations.
     
@@ -21,7 +21,7 @@ def generate_maze_tensor(buffer, device, nchannels=2, size=16, difficulty=0.5):
     """
     one_hot = buffer
     if one_hot is None:
-        one_hot = torch.zeros((nchannels, size, size), dtype=torch.int8, device=device)
+        one_hot = torch.zeros((nchannels, size, size), dtype=torch.float16, device=device)
     wall_cols = torch.arange(1, size, 2, device=device)
     num_walls = len(wall_cols)
     one_hot[0, :, wall_cols] = 1
@@ -59,13 +59,13 @@ class GridWorldEnv:
             2: (0, -1),  # left
             3: (0, 1),   # right
         }
-        self.grid = torch.zeros((self.num_channels, GRID_SIZE, GRID_SIZE), dtype=torch.int8, device=self.device)
+        self.grid = torch.zeros((self.num_channels, GRID_SIZE, GRID_SIZE), dtype=torch.float16, device=self.device)
         self.visit_count = torch.zeros((GRID_SIZE, GRID_SIZE), dtype=torch.int16, device=self.device)
         self.reset()
 
     def reset(self, maze_difficulty=0.5, dist_to_end=0.2):
         """Reset the environment with the given difficulty."""
-        generate_maze_tensor(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
+        generate_maze(self.grid, device=self.device, nchannels=self.num_channels, size=GRID_SIZE, difficulty=maze_difficulty)
 
         agentr = int(GRID_SIZE*(1 - nprand.rand()*dist_to_end))
         agentc = int(GRID_SIZE*(1 - nprand.rand()*dist_to_end))

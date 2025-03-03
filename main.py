@@ -15,7 +15,7 @@ def optimized_main():
     Now with curriculum learning to improve training.
     """
     # Training parameters
-    num_episodes = 10000  # More episodes for better results
+    num_episodes = 100  # More episodes for better results
     save_every = num_episodes//5
     eval_every = 50
     checkpoint_dir = "./checkpoints"
@@ -123,14 +123,10 @@ def optimized_main():
             )
 
         # Save checkpoint
-        if (episode + 1) % save_every == 0:
-            checkpoint_path = os.path.join(
-                checkpoint_dir, f"checkpoint_{episode+1}.pth"
-            )
-            torch.save(
-                {"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path
-            )
-            print(f"Checkpoint saved at episode {episode+1}")
+        #  if (episode + 1) % save_every == 0:
+        #      checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
+        #      torch.save({"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path)
+        #      print(f"Checkpoint saved at episode {episode+1}")
 
         # Evaluation phase
         if (episode + 1) % eval_every == 0:
@@ -147,7 +143,7 @@ def optimized_main():
 
                 while not eval_done:
                     eval_action = agent.select_action(eval_state)
-                    eval_state, reward, eval_done = env.step(eval_action, GAMMA)
+                    eval_state, reward, eval_done = env.step(eval_action)
                     eval_reward += reward
 
                 eval_rewards.append(eval_reward)
