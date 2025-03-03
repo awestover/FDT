@@ -149,6 +149,7 @@ def main():
         # Evaluation phase
         if (episode + 1) % eval_every == 0:
             eval_rewards = []
+            eval_lengths = []
             agent.epsilon = agent.epsilon_min # don't explore much in eval
 
             # For evaluation, use the final difficulty but vary start distances
@@ -158,16 +159,21 @@ def main():
                 eval_state = env.reset(final_difficulty, eval_start_distance)
                 eval_reward = 0
                 eval_done = False
+                eval_steps = 0
 
                 while not eval_done:
                     eval_action = agent.select_action(eval_state)
                     eval_state, reward, eval_done = env.step(eval_action)
                     eval_reward += reward
+                    eval_steps += 1
 
                 eval_rewards.append(eval_reward)
+                eval_lengths.append(eval_steps)
 
             avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
+            avg_eval_length = sum(eval_lengths) / len(eval_lengths)
             print(f"Evaluation: Avg Reward = {avg_eval_reward:.2f}")
+            print(f"Evaluation: Avg Length = {avg_eval_length:.1f}")
             # Update evaluation plots
             if PLOTTING:
                 update_plots(
