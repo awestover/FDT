@@ -11,19 +11,6 @@ DTYPE = torch.float32
 torch.set_default_dtype(DTYPE)
 
 
-import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from numpy import random as nprand
-from random import random as rand
-from math import exp
-
-GRID_SIZE = 16
-DTYPE = torch.float32
-torch.set_default_dtype(DTYPE)
-
-
 def fancy_generate_maze_vectorized(
     buffer, device, nchannels=2, size=16, difficulty=0.5, batch_size=1
 ):
@@ -308,38 +295,171 @@ class GridWorldEnv:
 
         return self.grids.clone()
 
+    # This method handles resetting a subset of environments
+    # Used when we need to reset just the environments that are done
+    def reset_subset(self, indices, maze_difficulty=0.5, dist_to_end=0.0):
+        """
+        Reset only specific environments indexed by indices
 
-def generate_maze(buffer, device, nchannels=2, size=16, difficulty=0.5):
-    """
-    Generate a maze directly as a one-hot encoded tensor with fully vectorized operations.
+        Args:
+            indices: Boolean mask or integer indices of environments to reset
+            maze_difficulty: Float or tensor of maze difficulties (0.0-1.0)
+            dist_to_end: Float or tensor of distances to end (0.0-1.0)
 
-    Args:
-        device: The torch device to place the tensor on
-        nchannels (int): Number of channels for one-hot encoding
-        size (int): Size of the maze (size x size grid)
-        difficulty (float): Value between 0.0 and 1.0 controlling maze difficulty
+        Returns:
+            Tensor of shape [num_reset, channels, grid_size, grid_size]
+        """
+        # Convert indices to boolean mask if it's a tensor of indices
+        if not isinstance(indices, torch.Tensor) or indices.dtype != torch.bool:
+            mask = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
+            mask[indices] = True
+        else:
+            mask = indices
 
-    Returns:
-        torch.Tensor: One-hot encoded maze of shape [nchannels, size, size]
-    """
-    one_hot = buffer
-    if one_hot is None:
-        one_hot = torch.zeros((nchannels, size, size), dtype=DTYPE, device=device)
-    wall_cols = torch.arange(1, size, 2, device=device)
-    num_walls = len(wall_cols)
-    one_hot[0, :, wall_cols] = 1
-    difficulty = max(0.0, min(1.0, difficulty))
-    hole_percentage = 0.75 - 0.65 * difficulty
-    holes_per_wall = max(1, int(hole_percentage * size))
-    repeated_wall_cols = wall_cols.repeat_interleave(holes_per_wall)
+        num_to_reset = mask.sum().item()
 
-    all_positions = torch.randint(0, size, (size * num_walls,), device=device)
-    hole_rows = all_positions[: num_walls * holes_per_wall]
-    one_hot[0, hole_rows, repeated_wall_cols] = 0
-    one_hot[0, -1, -1] = 0
-    if size % 2 == 0:
-        one_hot[0, -1, -2] = 0
-    return one_hot
+        # Handle scalar difficulty and distance
+        if not isinstance(maze_difficulty, torch.Tensor):
+            maze_difficulty = torch.full(
+                (num_to_reset,), maze_difficulty, dtype=DTYPE, device=self.device
+            )
+        elif (
+            len(maze_difficulty.shape) > 0
+            and maze_difficulty.shape[0] == self.batch_size
+        ):
+            maze_difficulty = maze_difficulty[mask]
+
+        if not isinstance(dist_to_end, torch.Tensor):
+            dist_to_end = torch.full(
+                (num_to_reset,), dist_to_end, dtype=DTYPE, device=self.device
+            )
+        elif len(dist_to_end.shape) > 0 and dist_to_end.shape[0] == self.batch_size:
+            dist_to_end = dist_to_end[mask]
+
+        # Generate new mazes just for the specified environments
+        new_grids = torch.zeros(
+            (num_to_reset, self.num_channels, GRID_SIZE, GRID_SIZE),
+            dtype=DTYPE,
+            device=self.device,
+        )
+
+        fancy_generate_maze_vectorized(
+            new_grids,
+            device=self.device,
+            nchannels=self.num_channels,
+            size=GRID_SIZE,
+            difficulty=maze_difficulty,
+            batch_size=num_to_reset,
+        )
+
+        # Clear agent channel before placing agents
+        new_grids[:, 1].zero_()
+
+        # Compute starting positions for the reset agents
+        new_positions = torch.zeros(
+            (num_to_reset, 2), dtype=torch.int16, device=self.device
+        )
+        new_positions[:, 0] = f_vectorized(dist_to_end, num_to_reset, self.device)
+        new_positions[:, 1] = f_vectorized(dist_to_end, num_to_reset, self.device)
+
+        # Place agents in the new grids
+        batch_indices = torch.arange(num_to_reset, device=self.device)
+        new_grids[batch_indices, 1, new_positions[:, 0], new_positions[:, 1]] = 1
+
+        # Update the main grids and agent positions
+        self.grids[mask] = new_grids
+        self.agent_positions[mask] = new_positions
+
+        # Reset step counters and visit counts for reset environments
+        self.steps_count[mask] = 0
+        self.visit_counts[mask].zero_()
+
+        # Mark reset environments as active
+        self.active_envs[mask] = True
+
+        return new_grids
+
+    def step(self, actions, active_mask=None):
+        """
+        Execute actions in all active environments
+
+        Args:
+            actions: Tensor of action indices [batch_size]
+            active_mask: Boolean mask indicating which environments are active [batch_size]
+                         If None, all environments are considered active
+
+        Returns:
+            next_states: Updated grid states
+            rewards: Rewards for each environment
+            dones: Done flags for each environment
+        """
+        # If no active mask is provided, consider all environments active
+        if active_mask is None:
+            active_mask = torch.ones(
+                self.batch_size, dtype=torch.bool, device=self.device
+            )
+
+        # Initialize rewards and dones for all environments
+        rewards = torch.zeros(self.batch_size, device=self.device)
+        dones = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
+
+        # Only process active environments
+        if active_mask.any():
+            # Get batch indices for active environments
+            batch_indices = torch.arange(self.batch_size, device=self.device)[
+                active_mask
+            ]
+
+            # Clear agent positions in active environments
+            self.grids[active_mask, 1].zero_()
+
+            # Get wall positions for collision checking
+            walls = self.grids[active_mask, 0]
+
+            # Process movement for each active environment
+            for i, b_idx in enumerate(batch_indices):
+                action = actions[b_idx]
+                y, x = self.agent_positions[b_idx]
+
+                # Get movement direction
+                dy, dx = self.move_map[action.item()]
+
+                # Calculate new position
+                new_y = torch.clamp(y + dy, 0, self.grid_size - 1)
+                new_x = torch.clamp(x + dx, 0, self.grid_size - 1)
+
+                # Check for wall collision
+                if walls[i, new_y, new_x] == 0:  # No wall at new position
+                    # Update agent position
+                    self.agent_positions[b_idx, 0] = new_y
+                    self.agent_positions[b_idx, 1] = new_x
+
+                # Update visit counts
+                self.visit_counts[
+                    b_idx,
+                    self.agent_positions[b_idx, 0],
+                    self.agent_positions[b_idx, 1],
+                ] += 1
+
+                # Place agent in new position
+                self.grids[
+                    b_idx,
+                    1,
+                    self.agent_positions[b_idx, 0],
+                    self.agent_positions[b_idx, 1],
+                ] = 1
+
+                # Check for goal reached
+                if (self.agent_positions[b_idx] == self.goal_positions[b_idx]).all():
+                    rewards[b_idx] = 1.0
+                    dones[b_idx] = True
+
+                # Check for max steps reached
+                self.steps_count[b_idx] += 1
+                if self.steps_count[b_idx] >= self.max_steps:
+                    dones[b_idx] = True
+
+        return self.grids.clone(), rewards, dones
 
 
 class BatchedDQNAgent:
@@ -368,7 +488,7 @@ class BatchedDQNAgent:
         self.batch_size = batch_size
         self.update_target_every = update_target_every
         self.steps_done = 0
-        self.env_batch_size = env_batch_size
+        self.env_batch_size = batch_size
 
         # Input channels and actions
         self.input_channels = 2  # wall, agent
@@ -486,151 +606,3 @@ class BatchedDQNAgent:
         self.epsilon = self.epsilon_min + 0.8 * (1.0 - self.epsilon_min) * exp(
             -3.0 * episode / total_episodes
         )
-
-
-# -----------------------
-# NEURAL NETWORK
-# -----------------------
-
-
-class DQN(nn.Module):
-    def __init__(self, input_channels, num_actions):
-        super(DQN, self).__init__()
-
-        # Calculate the feature size after convolutions and pooling
-        feature_size = ((GRID_SIZE // 4) ** 2) * 4 * input_channels
-
-        # CNN layers
-        self.cnn_layers = nn.Sequential(
-            # First block: 4 → 8 channels, gs → gs/2
-            nn.Conv2d(input_channels, 2 * input_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(2 * input_channels),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-            # Second block: 8 → 16 channels, gs/2 → gs/4
-            nn.Conv2d(2 * input_channels, 4 * input_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(4 * input_channels),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
-        )
-
-        # MLP layers
-        self.mlp = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(feature_size, 128),
-            nn.ReLU(),
-            nn.Dropout(0.5),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            nn.Dropout(0.3),
-            nn.Linear(64, num_actions),
-        )
-
-    def forward(self, x):
-        return self.mlp(self.cnn_layers(x))
-
-
-# -----------------------
-# REPLAY BUFFER
-# -----------------------
-
-
-class TensorReplayBuffer:
-    def __init__(self, capacity, state_shape, device):
-        self.capacity = capacity
-        self.device = device
-        self.position = 0
-        self.size = 0
-
-        # Pre-allocate tensors for all storage
-        self.states = torch.zeros((capacity, *state_shape), dtype=DTYPE, device=device)
-        self.actions = torch.zeros((capacity, 1), dtype=torch.long, device=device)
-        self.rewards = torch.zeros((capacity, 1), dtype=DTYPE, device=device)
-        self.next_states = torch.zeros(
-            (capacity, *state_shape), dtype=DTYPE, device=device
-        )
-        self.dones = torch.zeros((capacity, 1), dtype=torch.bool, device=device)
-
-    def push(self, state, action, reward, next_state, done):
-        """Store a transition in the buffer."""
-        # Convert inputs to tensors if needed
-        if not isinstance(action, torch.Tensor):
-            action = torch.tensor([action], device=self.device, dtype=torch.long)
-        if not isinstance(reward, torch.Tensor):
-            reward = torch.tensor([reward], dtype=DTYPE, device=self.device)
-        if not isinstance(done, torch.Tensor):
-            done = torch.tensor([done], dtype=torch.bool, device=self.device)
-
-        # Store directly in pre-allocated tensors
-        self.states[self.position] = state
-        self.actions[self.position, 0] = action
-        self.rewards[self.position, 0] = reward
-        self.next_states[self.position] = next_state
-        self.dones[self.position, 0] = done
-
-        # Update position and size
-        self.position = (self.position + 1) % self.capacity
-        self.size = min(self.size + 1, self.capacity)
-
-    def push_batch(self, states, actions, rewards, next_states, dones):
-        """
-        Store multiple transitions in the buffer efficiently.
-
-        Args:
-            states: Batch of states [batch_size, channels, grid_size, grid_size]
-            actions: Batch of actions [batch_size]
-            rewards: Batch of rewards [batch_size]
-            next_states: Batch of next states [batch_size, channels, grid_size, grid_size]
-            dones: Batch of done flags [batch_size]
-        """
-        batch_size = len(states)
-
-        # Ensure all inputs are tensors
-        if not isinstance(actions, torch.Tensor):
-            actions = torch.tensor(actions, device=self.device, dtype=torch.long)
-        if not isinstance(rewards, torch.Tensor):
-            rewards = torch.tensor(rewards, dtype=DTYPE, device=self.device)
-        if not isinstance(dones, torch.Tensor):
-            dones = torch.tensor(dones, dtype=torch.bool, device=self.device)
-
-        # Handle wrap-around at capacity boundaries
-        positions = (
-            torch.arange(self.position, self.position + batch_size, device=self.device)
-            % self.capacity
-        )
-
-        # Store batched data with advanced indexing
-        self.states[positions] = states
-        self.actions[positions, 0] = actions
-        self.rewards[positions, 0] = rewards
-        self.next_states[positions] = next_states
-        self.dones[positions, 0] = dones
-
-        # Update position and size
-        self.position = (self.position + batch_size) % self.capacity
-        self.size = min(self.size + batch_size, self.capacity)
-
-    def sample(self, batch_size):
-        """Sample a batch of transitions from the buffer efficiently."""
-        batch_size = min(batch_size, self.size)
-        batch_indices = torch.randint(0, self.size, (batch_size,), device=self.device)
-
-        # Index directly from pre-allocated tensors
-        return (
-            self.states[batch_indices],
-            self.actions[batch_indices].squeeze(1),  # Remove extra dimension
-            self.rewards[batch_indices].squeeze(1),  # Remove extra dimension
-            self.next_states[batch_indices],
-            self.dones[batch_indices].squeeze(1),  # Remove extra dimension
-        )
-
-    def __len__(self):
-        return self.size
-
-
-if __name__ == "__main__":
-    m = fancy_generate_maze_vectorized(None, torch.device("cpu"), batch_size=1)
-    import matplotlib.pyplot as plt
-
-    plt.imshow(m[0, 0, :, :].numpy(), cmap="gray")
-    plt.show()
