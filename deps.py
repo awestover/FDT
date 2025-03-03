@@ -664,6 +664,10 @@ class TensorReplayBuffer:
         )
         self.dones = torch.zeros((capacity, 1), dtype=torch.bool, device=device)
 
+    def __len__(self):
+        """Return the current size of the buffer."""
+        return self.size
+
     def push(self, state, action, reward, next_state, done):
         """Store a transition in the buffer."""
         # Convert inputs to tensors if needed
