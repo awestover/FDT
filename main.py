@@ -42,7 +42,7 @@ def main():
     env = GridWorldEnv(device, max_steps=100)  # Using our new curriculum environment
 
     # TODO: increase batch size to as big as the GPU can handle
-    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=64, update_target_every=200)
+    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=1024, update_target_every=500)
 
     # Tracking variables
     episode_lengths = []
