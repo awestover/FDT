@@ -10,150 +10,200 @@ GRID_SIZE = 16
 DTYPE = torch.float32
 torch.set_default_dtype(DTYPE)
 
-
-def fancy_generate_maze_vectorized(
-    buffer, device, nchannels=2, size=16, difficulty=0.5, batch_size=1
-):
+def fancy_generate_maze_vectorized(buffer=None, device=None, nchannels=2, size=16, difficulty=0.5, batch_size=1):
     """
-    Vectorized version of fancy_generate_maze that handles batch processing.
-
+    Fully vectorized maze generator that ensures a path from start to end.
+    
     Args:
         buffer: Optional pre-allocated tensor to write into, shape [batch_size, nchannels, size, size]
         device: The torch device to place the tensor on
         nchannels (int): Number of channels for one-hot encoding
         size (int): Size of the maze (size x size grid)
         difficulty (float or tensor): Value between 0.0 and 1.0 controlling maze complexity
-                                      Can be a single float or a tensor of shape [batch_size]
+                                     Can be a single float or a tensor of shape [batch_size]
         batch_size (int): Number of mazes to generate in parallel
-
+    
     Returns:
         torch.Tensor: Batch of one-hot encoded mazes with shape [batch_size, nchannels, size, size]
     """
+    import torch
+    
+    # Handle device
+    if device is None:
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    
     # Convert difficulty to tensor if it's a scalar
     if not isinstance(difficulty, torch.Tensor):
-        difficulty = torch.full((batch_size,), difficulty, dtype=DTYPE, device=device)
-
+        difficulty = torch.full((batch_size,), difficulty, device=device)
+    
     # Initialize the output tensor
-    one_hot = buffer
-    if one_hot is None:
-        one_hot = torch.zeros(
-            (batch_size, nchannels, size, size), dtype=DTYPE, device=device
-        )
+    if buffer is None:
+        one_hot = torch.ones((batch_size, nchannels, size, size), device=device)
     else:
-        one_hot.zero_()
-
-    # Start with all mazes filled with walls
+        one_hot = buffer
+        one_hot.fill_(1.0)
+    
+    # Start with walls everywhere (channel 0 = walls)
     one_hot[:, 0, :, :] = 1.0
-
-    # Create grid pattern - clear cells at even coordinates using meshgrid
-    # Create indices for even coordinates
+    
+    # Create grid pattern - make all even coordinates paths
     even_indices = torch.arange(0, size, 2, device=device)
-
-    # Use meshgrid to create coordinate matrices
     i_coords, j_coords = torch.meshgrid(even_indices, even_indices, indexing="ij")
-
-    # Clear all even cells across all batches in one operation
-    one_hot[:, 0, i_coords, j_coords] = 0
-
-    # For each batch element, process the guaranteed path and connections
-    # This part is harder to fully vectorize due to the path creation logic
-    # We'll use a batched loop approach here
-
-    # Calculate waypoints for each maze in batch
-    num_waypoints = 3 + (difficulty * 3).int()  # [batch_size]
-
-    # Process each maze in the batch
-    for b in range(batch_size):
-        # Waypoints start at top-left for all mazes
-        waypoints = [(0, 0)]
-
-        # Generate intermediate waypoints for this maze
-        for i in range(num_waypoints[b].item()):
-            progress = (i + 1) / (num_waypoints[b].item() + 1)
-
-            # Mix randomness with progression based on difficulty
-            random_factor = difficulty[b].item() * 0.4
-            progress_factor = 1.0 - random_factor
-
-            # Calculate waypoint position
-            wp_y = int(
-                (
-                    torch.rand(1, device=device).item() * random_factor
-                    + progress * progress_factor
-                )
-                * (size - 1)
-            )
-            wp_x = int(
-                (
-                    torch.rand(1, device=device).item() * random_factor
-                    + progress * progress_factor
-                )
-                * (size - 1)
-            )
-
-            # Ensure waypoints are on valid path cells (even coordinates)
-            wp_y = (wp_y // 2) * 2
-            wp_x = (wp_x // 2) * 2
-
-            waypoints.append((wp_y, wp_x))
-
-        # Add the end point
-        waypoints.append((size - 1, size - 1))
-
-        # Connect the waypoints with straight paths
-        for i in range(len(waypoints) - 1):
-            y1, x1 = waypoints[i]
-            y2, x2 = waypoints[i + 1]
-
-            # Connect horizontally first, then vertically
-            x_start, x_end = min(x1, x2), max(x1, x2)
-            for x in range(x_start, x_end + 1):
-                one_hot[b, 0, y1, x] = 0
-
-            # Create vertical path
-            y_start, y_end = min(y1, y2), max(y1, y2)
-            for y in range(y_start, y_end + 1):
-                one_hot[b, 0, y, x_end] = 0
-
-        # Add connections based on difficulty
-        connect_chance = 0.7 - 0.5 * difficulty[b].item()
-
-        # For each path cell, randomly connect to neighboring cells
-        for i in range(0, size - 2, 2):
-            for j in range(0, size - 2, 2):
-                # Each cell gets one random connection (north or east)
-                if torch.rand(1, device=device).item() < 0.5 and i > 0:  # Connect north
-                    one_hot[b, 0, i - 1, j] = 0
-                else:  # Connect east
-                    one_hot[b, 0, i, j + 1] = 0
-
-                # Add extra connections with probability based on difficulty
-                if torch.rand(1, device=device).item() < connect_chance:
-                    # Pick a random direction
-                    direction = int(torch.rand(1, device=device).item() * 4)
-
-                    if direction == 0 and i > 0:  # North
-                        one_hot[b, 0, i - 1, j] = 0
-                    elif direction == 1 and j < size - 1:  # East
-                        one_hot[b, 0, i, j + 1] = 0
-                    elif direction == 2 and i < size - 1:  # South
-                        one_hot[b, 0, i + 1, j] = 0
-                    elif direction == 3 and j > 0:  # West
-                        one_hot[b, 0, i, j - 1] = 0
-
-    # Clear entrance and exit for all mazes (vectorized)
-    one_hot[:, 0, 0, 0] = 0  # Entrance (top-left)
-    one_hot[:, 0, size - 1, size - 1] = 0  # Exit (bottom-right)
-
-    # Clean up paths to entrance/exit for all mazes (vectorized)
+    
+    # Set all even cells to be paths (0 = path, 1 = wall in channel 0)
+    one_hot[:, 0, i_coords, j_coords] = 0.0
+    
+    # Number of waypoints based on difficulty (vectorized)
+    num_waypoints = 3 + (difficulty * 3).int()
+    max_waypoints = num_waypoints.max().item()
+    
+    # Generate waypoint coordinates for all mazes in batch
+    # Shape: [batch_size, max_waypoints+2, 2]
+    # +2 for start and end points
+    waypoints = torch.zeros((batch_size, max_waypoints+2, 2), device=device)
+    
+    # All mazes start at top-left (0,0)
+    waypoints[:, 0, :] = 0
+    
+    # All mazes end at bottom-right (size-1, size-1)
+    waypoints[:, -1, 0] = size - 1
+    waypoints[:, -1, 1] = size - 1
+    
+    # Generate intermediate waypoints
+    for i in range(max_waypoints):
+        # Create a mask for valid batch items (those that need this waypoint)
+        mask = (i < num_waypoints).float().unsqueeze(-1)
+        
+        # Calculate progress along path
+        progress = torch.tensor([(i + 1) / (n.item() + 1) for n in num_waypoints], device=device).unsqueeze(-1)
+        
+        # Mix randomness with progression based on difficulty
+        random_factor = difficulty.unsqueeze(-1) * 0.4
+        progress_factor = 1.0 - random_factor
+        
+        # Random positions scaled by maze size
+        rand_pos = torch.rand((batch_size, 2), device=device)
+        
+        # Calculate waypoint positions
+        wp_pos = (rand_pos * random_factor + progress * progress_factor) * (size - 1)
+        
+        # Round to even coordinates for valid paths
+        wp_pos = (wp_pos // 2) * 2
+        
+        # Apply mask and store waypoints
+        waypoints[:, i+1, :] = wp_pos * mask
+    
+    # Create paths between waypoints for all mazes in batch
+    for i in range(max_waypoints + 1):
+        # Only process waypoints that exist for each batch item
+        if i == 0:  # First segment (start to first waypoint)
+            current_mask = torch.ones(batch_size, device=device)
+        else:
+            current_mask = (i < num_waypoints+1).float()
+        
+        # Get current and next waypoints
+        curr_points = waypoints[:, i, :]
+        next_points = waypoints[:, i+1, :]
+        
+        # Connect horizontally first, then vertically
+        # For each batch, we need to create paths between waypoints
+        
+        # This part is trickier to fully vectorize due to variable path lengths
+        # Let's implement it efficiently by broadcasting
+        
+        # Horizontal paths
+        x_starts = curr_points[:, 1].int()
+        x_ends = next_points[:, 1].int()
+        y_starts = curr_points[:, 0].int()
+        
+        # Determine direction (left to right or right to left)
+        x_steps = (x_ends >= x_starts).float() * 2 - 1  # 1 if going right, -1 if going left
+        
+        # Maximum path length needed
+        max_x_dist = (x_ends - x_starts).abs().max().int().item()
+        
+        # Create horizontal paths
+        for step in range(max_x_dist + 1):
+            # Calculate x position at each step for each batch
+            x_offset = torch.clamp(step * x_steps, torch.zeros_like(x_steps), (x_ends - x_starts).abs())
+            x_pos = (x_starts + x_offset * ((x_ends >= x_starts).float() * 2 - 1)).long()
+            
+            # Apply mask for valid positions
+            valid_steps = (step <= (x_ends - x_starts).abs()) & current_mask.bool()
+            
+            # Carve path at these positions
+            for b in range(batch_size):
+                if valid_steps[b]:
+                    one_hot[b, 0, y_starts[b], x_pos[b]] = 0
+        
+        # Vertical paths (from where horizontal paths ended to the next waypoint)
+        y_ends = next_points[:, 0].int()
+        
+        # Determine direction (top to bottom or bottom to top)
+        y_steps = (y_ends >= y_starts).float() * 2 - 1  # 1 if going down, -1 if going up
+        
+        # Maximum path length needed
+        max_y_dist = (y_ends - y_starts).abs().max().int().item()
+        
+        # Create vertical paths
+        for step in range(max_y_dist + 1):
+            # Calculate y position at each step for each batch
+            y_offset = torch.clamp(step * y_steps, torch.zeros_like(y_steps), (y_ends - y_starts).abs())
+            y_pos = (y_starts + y_offset * ((y_ends >= y_starts).float() * 2 - 1)).long()
+            
+            # Apply mask for valid positions
+            valid_steps = (step <= (y_ends - y_starts).abs()) & current_mask.bool()
+            
+            # Carve path at these positions
+            for b in range(batch_size):
+                if valid_steps[b]:
+                    one_hot[b, 0, y_pos[b], x_ends[b]] = 0
+    
+    # Add random connections based on difficulty
+    # Calculate connection probability (inversely related to difficulty)
+    connect_chance = 0.7 - difficulty * 0.5
+    
+    # Generate random connection masks
+    rand_connect = torch.rand((batch_size, size//2, size//2, 4), device=device)
+    connect_mask = rand_connect < connect_chance.view(batch_size, 1, 1, 1)
+    
+    # Process each cell in a vectorized way as much as possible
+    for i in range(0, size-2, 2):
+        for j in range(0, size-2, 2):
+            # Apply north connections
+            if i > 0:
+                north_mask = connect_mask[:, i//2, j//2, 0]
+                one_hot[north_mask, 0, i-1, j] = 0
+            
+            # Apply east connections
+            east_mask = connect_mask[:, i//2, j//2, 1]
+            one_hot[east_mask, 0, i, j+1] = 0
+            
+            # Apply south connections
+            south_mask = connect_mask[:, i//2, j//2, 2]
+            one_hot[south_mask, 0, i+1, j] = 0
+            
+            # Apply west connections
+            if j > 0:
+                west_mask = connect_mask[:, i//2, j//2, 3]
+                one_hot[west_mask, 0, i, j-1] = 0
+    
+    # Ensure entrance and exit are clear for all mazes
+    one_hot[:, 0, 0, 0] = 0  # Entrance
+    one_hot[:, 0, size-1, size-1] = 0  # Exit
+    
+    # Ensure paths leading to entrance/exit are clear
     if size > 1:
-        one_hot[:, 0, 0, 1] = 0  # Clear path right of entrance
-        one_hot[:, 0, 1, 0] = 0  # Clear path below entrance
-        one_hot[:, 0, size - 2, size - 1] = 0  # Clear path to exit
-        one_hot[:, 0, size - 1, size - 2] = 0  # Clear path to exit
-
+        one_hot[:, 0, 0, 1] = 0  # Path to the right of entrance
+        one_hot[:, 0, 1, 0] = 0  # Path below entrance
+        one_hot[:, 0, size-2, size-1] = 0  # Path to exit
+        one_hot[:, 0, size-1, size-2] = 0  # Path to exit
+    
+    # Set channel 1 to be the opposite of channel 0 (if using multi-channel encoding)
+    if nchannels > 1:
+        one_hot[:, 1, :, :] = 1.0 - one_hot[:, 0, :, :]
+    
     return one_hot
-
 
 def f_vectorized(d, bsz, device):
     """
