@@ -1,11 +1,15 @@
 from deps import *
-from plotting import setup_plotting, update_plots
 import random
 import torch
 import os
 
+PLOTTING = False
+if PLOTTING:
+    from plotting import setup_plotting, update_plots
+
 def main():
-    plot_elements = setup_plotting()
+    if PLOTTING:
+        plot_elements = setup_plotting()
 
     """
     Optimized training loop for DQN agent with performance enhancements
@@ -121,23 +125,26 @@ def main():
                 f"Difficulty: {cur_difficulty:.2f} | "
                 f"Dist To End: {cur_dist_to_end:.2f}"
             )
-            update_plots(
-                plot_elements,
-                episode,
-                episode_reward,
-                steps,
-                episode_loss if losses else None,
-                agent.epsilon,
-                target_upated=target_upated
-            )
+            if PLOTTING:
+                update_plots(
+                    plot_elements,
+                    episode,
+                    episode_reward,
+                    steps,
+                    episode_loss if losses else None,
+                    agent.epsilon,
+                    target_upated=target_upated
+                )
 
         #  Save checkpoint
         if (episode + 1) % save_every == 0:
             checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
             torch.save({"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path)
             print(f"Checkpoint saved at episode {episode+1}")
-            plot_path = os.path.join(checkpoint_dir, f"training_plot_{episode+1}.png")
-            plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches='tight')
+
+            if PLOTTING:
+                plot_path = os.path.join(checkpoint_dir, f"training_plot_{episode+1}.png")
+                plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches='tight')
 
         # Evaluation phase
         if (episode + 1) % eval_every == 0:
@@ -162,20 +169,22 @@ def main():
             avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
             print(f"Evaluation: Avg Reward = {avg_eval_reward:.2f}")
             # Update evaluation plots
-            update_plots(
-                plot_elements,
-                episode,
-                None,
-                None,
-                None,
-                None,
-                is_eval=True,
-                eval_reward=avg_eval_reward
-            )
+            if PLOTTING:
+                update_plots(
+                    plot_elements,
+                    episode,
+                    None,
+                    None,
+                    None,
+                    None,
+                    is_eval=True,
+                    eval_reward=avg_eval_reward
+                )
 
     print("Training completed!")
-    plt.ioff()
-    plt.close()
+    if PLOTTING:
+        plt.ioff()
+        plt.close()
 
 # You can run this with profiling to verify the improvements
 if __name__ == "__main__":
