@@ -100,3 +100,45 @@ plan now:
 
 2. then we should probably call it a day on this guy
 
+
+---
+
+ok, I'm totally going down the optimization rabbit hole. 
+I want RL to *make sense*
+I want to *feel* what the hyperparameters should be, how credit
+assignment should work. 
+Most of all, I want the agent to be perfect.
+
+I want it to actually try to get to the end of the maze
+
+Here are some computations.
+
+---
+
+An L4 GPU can do 30 teraFLOPS if we are talking about fp32's.
+I don't get paid enough to mess around with fp16's (actually I
+don't get paid at all! except in the joy of seeing my little AI
+dude solve some mazes).
+
+Let's call this 10^13 TFs just in case my GPU is not an L4 or if
+I do some dumb stuff.
+
+My CNN for a 16x16 grid has 10k params.
+Crap CNNs are parameter efficient!
+This makes me feel not bad about feeding in the whole image.
+
+I'm going to have 
+BSZ = 1024
+MAX_EP_LENGTH = 100
+
+I'm going to run BSZ many parallel instances of letting the AI
+explore a maze.
+After that I'm going to update the policy network based on all
+those experiences.
+
+10 times during that process, I'll update the target net
+
+Finally, I'll iterate this whole thing for 10^6 episodes
+
+Which should take about 2 minutes.
+

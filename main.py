@@ -3,51 +3,57 @@ import random
 import torch
 import os
 
-PROFILING_ONLY = False
+PROFILING_ONLY = True
 PLOTTING = False
 if PLOTTING:
     from plotting import setup_plotting, update_plots
 
+# TODO:
+# choose BUFFER_CAPACITY to max out GPU memory
+# choose NUM_EPISODES to max out time
+
+
 def main():
+    ON_GPU = torch.cuda.is_available()
+    device = torch.device("cuda" if ON_GPU else "cpu")
+    print(f"Using device: {device}")
+    MAX_STEPS = 100
+    BSZ = 1024 if ON_GPU else 32
+    UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
+    BUFFER_CAPACITY = 100_000
+    NUM_EPISODES = 100_000 if not PROFILING_ONLY else 50
+    SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
+    EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
+
     if PLOTTING:
         plot_elements = setup_plotting()
 
-    """
-    Optimized training loop for DQN agent with performance enhancements
-    especially focused on speeding up the one-hot encoding process.
-    Now with curriculum learning to improve training.
-    """
     # Training parameters
-    num_episodes = 5000  # More episodes for better results
-    save_every = num_episodes//10
-    eval_every = num_episodes//100
     checkpoint_dir = "./checkpoints"
-    if PROFILING_ONLY:
-        num_episodes = 50
 
     # Curriculum learning parameters
-    initial_difficulty = 0.5  # Start with very easy mazes
-    final_difficulty = 0.8  # End with challenging mazes
-    init_dist_to_end = 0.5  # Start with short distance to end
-    final_dist_to_end = 1.0 # End with long distance to end
+    initial_difficulty = 0.25
+    final_difficulty = 1.0
+    init_dist_to_end = 0.25
+    final_dist_to_end = 1.0
 
     # Enable CUDA benchmarking to optimize CUDA operations
     torch.backends.cudnn.benchmark = True
 
-    # Use GPU if available
-    ON_GPU = torch.cuda.is_available()
-    device = torch.device("cuda" if ON_GPU else "cpu")
-    print(f"Using device: {device}")
-
     # Create checkpoints directory
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    # Initialize optimized environment and agent
-    env = GridWorldEnv(device, max_steps=100)  # Using our new curriculum environment
+    # Initialize batched environment and agent
+    env = GridWorldEnv(device, max_steps=MAX_STEPS, batch_size=BSZ)
 
-    # TODO: increase batch size to as big as the GPU can handle
-    BSZ = 1024 if ON_GPU else 64
-    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=BSZ, update_target_every=500)
+    agent = BatchedDQNAgent(
+        device,
+        lr=2e-4,
+        gamma=0.99,
+        buffer_capacity=BUFFER_CAPACITY,
+        batch_size=BSZ,
+        update_target_every=UPDATE_TARGET_EVERY,
+    )
 
     # Tracking variables
     episode_lengths = []
@@ -56,151 +62,232 @@ def main():
 
     # Warmup phase with vectorized operations
     print("Warming up replay buffer...")
-    state = env.reset(initial_difficulty, init_dist_to_end)
-    for _ in range(min(1000, agent.replay_buffer.capacity // 10)):
-        action = random.randint(0, 3)  # Random action
-        next_state, reward, done = env.step(action)
-        agent.replay_buffer.push(state, action, reward, next_state, done)
-        state = next_state
-        if done:
-            state = env.reset(initial_difficulty, init_dist_to_end)
+    difficulties = torch.ones(BSZ, device=device) * initial_difficulty
+    distances = torch.ones(BSZ, device=device) * init_dist_to_end
+    states = env.reset(difficulties, distances)
 
-    print(f"Starting training for {num_episodes} episodes")
+    # Fill buffer with a couple random actions
+    for _ in range(MAX_STEPS // 10):
+        actions = torch.randint(0, 4, (BSZ,), device=device)
+        next_states, rewards, dones = env.step(actions)
+        agent.push_transitions(states, actions, rewards, next_states, dones)
+        states = next_states
 
-    # Main training loop
-    for episode in range(num_episodes):
-        agent.set_epsilon(episode, num_episodes)
+    # Reset done environments
+    if dones.any():
+        env.reset_done_envs(difficulties, distances)
 
-        # Calculate current curriculum parameters based on training progress
-        progress = episode / num_episodes
-        cur_difficulty = initial_difficulty + progress * (final_difficulty - initial_difficulty)
-        cur_dist_to_end = init_dist_to_end + progress * (final_dist_to_end - init_dist_to_end)
+    print(f"Starting training with {BSZ} parallel environments")
+    print(f"Target: {NUM_EPISODES} total episodes")
 
-        # Reset environment with current curriculum parameters
-        state = env.reset(cur_difficulty, cur_dist_to_end)
-        episode_reward = 0
-        episode_loss = 0
-        steps = 0
+    # Keep track of steps per episode for each environment
+    env_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
+    env_episode_rewards = torch.zeros(BSZ, device=device)
+
+    # Main training loop - we'll run this until we complete the target number of episodes
+    for episode in range(NUM_EPISODES):
+        agent.set_epsilon(episode, NUM_EPISODES)
+
+        # Calculate current curriculum parameters
+        progress = episode / NUM_EPISODES
+        cur_difficulty = initial_difficulty + progress * (
+            final_difficulty - initial_difficulty
+        )
+        cur_dist_to_end = init_dist_to_end + progress * (
+            final_dist_to_end - init_dist_to_end
+        )
+
+        # Set up difficulty and distance tensors for all environments
+        difficulties = torch.ones(BSZ, device=device) * cur_difficulty
+        distances = torch.ones(BSZ, device=device) * cur_dist_to_end
+
+        # Reset all environments with current parameters
+        states = env.reset(difficulties, distances)
+        env_episode_steps.zero_()
+        env_episode_rewards.zero_()
+
+        done_mask = torch.zeros(BSZ, dtype=torch.bool, device=device)
         losses = []
 
-        # Episode loop - collect full episode before updating
-        done = False
-        transitions = []
+        # Run all environments until all episodes are complete
+        while not done_mask.all():
+            # Select and execute actions for all environments
+            actions = agent.select_actions(states)
+            next_states, rewards, dones = env.step(actions)
 
-        while not done:
-            # Select and execute action
-            action = agent.select_action(state)
-            next_state, reward, done = env.step(action)
+            # Update accumulated rewards and steps for active environments
+            active_mask = ~done_mask
+            env_episode_rewards[active_mask] += rewards[active_mask]
+            env_episode_steps[active_mask] += 1
 
-            # Store transition
-            agent.replay_buffer.push(state, action, reward, next_state, done)
-            transitions.append((state, action, reward, next_state, done))
+            # Store transitions in replay buffer
+            agent.push_transitions(states, actions, rewards, next_states, dones)
 
-            # Update state and tracking variables
-            state = next_state
-            episode_reward += reward
-            steps += 1
-
-        # Batch learning after episode completion
-        target_upated = False
-        for _ in transitions:
+            # Update model
             loss = agent.update()
             if loss is not None:
                 losses.append(loss)
-            target_updated = target_upated or (agent.steps_done % agent.update_target_every == 0)
 
-        # Calculate metrics
-        episode_lengths.append(steps)
-        all_rewards.append(episode_reward)
+            # Track newly completed episodes
+            new_dones = dones & ~done_mask
+            done_mask = done_mask | dones
+
+            # Record completed episode stats
+            num_new_done = new_dones.sum().item()
+            if num_new_done > 0:
+                for i in range(BSZ):
+                    if new_dones[i]:
+                        episode_lengths.append(env_episode_steps[i].item())
+                        all_rewards.append(env_episode_rewards[i].item())
+                        episodes_completed += 1
+
+            # Update states
+            states = next_states
+
+            # Reset environments that are done
+            if dones.any():
+                env.reset_done_envs(difficulties, distances)
+
+        # Calculate loss for this batch of episodes
         if losses:
-            episode_loss = sum(losses) / len(losses)
-            all_losses.append(episode_loss)
+            batch_loss = sum(losses) / len(losses)
+            all_losses.append(batch_loss)
 
         # Print progress
-        if (episode + 1) % 10 == 0:
-            avg_reward = sum(all_rewards[-10:]) / 10
-            avg_length = sum(episode_lengths[-10:]) / 10
-            avg_loss = sum(all_losses[-10:]) / 10 if all_losses else 0
+        if episodes_completed % 10 == 0 or (episodes_completed % BSZ == 0):
+            recent_rewards = all_rewards[-BSZ:]
+            recent_lengths = episode_lengths[-BSZ:]
+
+            avg_reward = sum(recent_rewards) / len(recent_rewards)
+            avg_length = sum(recent_lengths) / len(recent_lengths)
+            avg_loss = sum(all_losses[-10:]) / max(1, len(all_losses[-10:]))
+
             print(
-                f"Episode {episode+1}/{num_episodes} | "
+                f"Episodes {episodes_completed}/{NUM_EPISODES} | "
                 f"Reward: {avg_reward:.2f} | "
                 f"Length: {avg_length:.1f} | "
                 f"Loss: {avg_loss:.6f} | "
                 f"Epsilon: {agent.epsilon:.3f} | "
-                f"Difficulty: {cur_difficulty:.2f} | "
-                f"Dist To End: {cur_dist_to_end:.2f}"
+                f"Difficulty: {cur_difficulty:.2f}"
             )
+
             if PLOTTING:
                 update_plots(
                     plot_elements,
-                    episode,
-                    episode_reward,
-                    steps,
-                    episode_loss if losses else None,
+                    episodes_completed,
+                    avg_reward,
+                    avg_length,
+                    avg_loss,
                     agent.epsilon,
-                    target_upated=target_upated
                 )
 
-        #  Save checkpoint
-        if (episode + 1) % save_every == 0:
-            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
-            torch.save({"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path)
-            print(f"Checkpoint saved at episode {episode+1}")
+        # Save checkpoint
+        if episodes_completed > 0 and episodes_completed % SAVE_EVERY < BSZ:
+            checkpoint_path = os.path.join(
+                checkpoint_dir, f"checkpoint_{episodes_completed}.pth"
+            )
+            torch.save(
+                {"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path
+            )
+            print(f"Checkpoint saved at episode {episodes_completed}")
 
             if PLOTTING:
-                plot_path = os.path.join(checkpoint_dir, f"training_plot_{episode+1}.png")
-                plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches='tight')
+                plot_path = os.path.join(
+                    checkpoint_dir, f"training_plot_{episodes_completed}.png"
+                )
+                plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches="tight")
 
         # Evaluation phase
-        if (episode + 1) % eval_every == 0:
+        if episodes_completed > 0 and episodes_completed % EVAL_EVERY < BSZ:
+            print(f"Running evaluation at {episodes_completed} episodes...")
             eval_rewards = []
             eval_lengths = []
-            agent.epsilon = agent.epsilon_min # don't explore much in eval
 
-            # For evaluation, use the final difficulty but vary start distances
-            for i in range(5):  # Run 5 evaluation episodes
-                # Use different start distances for evaluation
-                eval_state = env.reset(cur_difficulty, cur_dist_to_end)
-                eval_reward = 0
-                eval_done = False
-                eval_steps = 0
+            # Save current epsilon and use minimum for evaluation
+            original_epsilon = agent.epsilon
+            agent.epsilon = agent.epsilon_min
 
-                while not eval_done:
-                    eval_action = agent.select_action(eval_state)
-                    eval_state, reward, eval_done = env.step(eval_action)
-                    eval_reward += reward
-                    eval_steps += 1
+            # Reset all environments with current difficulty but vary start distances
+            eval_difficulties = torch.ones(BSZ, device=device) * cur_difficulty
+            eval_distances = torch.ones(BSZ, device=device) * cur_dist_to_end
 
-                eval_rewards.append(eval_reward)
-                eval_lengths.append(eval_steps)
+            # Run multiple evaluation batches to get enough samples
+            num_eval_batches = 5  # Run 5 batches of BSZ episodes
 
+            for _ in range(num_eval_batches):
+                eval_states = env.reset(eval_difficulties, eval_distances)
+                eval_episode_rewards = torch.zeros(BSZ, device=device)
+                eval_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
+                eval_done_mask = torch.zeros(BSZ, dtype=torch.bool, device=device)
+
+                while not eval_done_mask.all():
+                    eval_actions = agent.select_actions(eval_states)
+                    eval_next_states, eval_rewards, eval_dones = env.step(eval_actions)
+
+                    # Update accumulators for active environments
+                    active_mask = ~eval_done_mask
+                    eval_episode_rewards[active_mask] += eval_rewards[active_mask]
+                    eval_episode_steps[active_mask] += 1
+
+                    # Track newly completed episodes
+                    new_dones = eval_dones & ~eval_done_mask
+                    eval_done_mask = eval_done_mask | eval_dones
+
+                    # Record completed episode stats
+                    for i in range(BSZ):
+                        if new_dones[i]:
+                            eval_rewards.append(eval_episode_rewards[i].item())
+                            eval_lengths.append(eval_episode_steps[i].item())
+
+                    # Update states
+                    eval_states = eval_next_states
+
+                    # Reset environments that are done
+                    if eval_dones.any():
+                        env.reset_done_envs(eval_difficulties, eval_distances)
+
+            # Restore original epsilon
+            agent.epsilon = original_epsilon
+
+            # Calculate evaluation metrics
             avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
             avg_eval_length = sum(eval_lengths) / len(eval_lengths)
+
             print(f"Evaluation: Avg Reward = {avg_eval_reward:.2f}")
             print(f"Evaluation: Avg Length = {avg_eval_length:.1f}")
+
             # Update evaluation plots
             if PLOTTING:
                 update_plots(
                     plot_elements,
-                    episode,
+                    episodes_completed,
                     None,
                     None,
                     None,
                     None,
                     is_eval=True,
-                    eval_reward=avg_eval_reward
+                    eval_reward=avg_eval_reward,
                 )
 
     print("Training completed!")
+
+    # Final save
+    final_checkpoint_path = os.path.join(checkpoint_dir, "final_model.pth")
+    torch.save(
+        {"model_state_dict": agent.policy_net.state_dict()}, final_checkpoint_path
+    )
+    print(f"Final model saved at {final_checkpoint_path}")
+
     if PLOTTING:
         plt.ioff()
         plt.close()
 
-# You can run this with profiling to verify the improvements
+
 if __name__ == "__main__":
     import cProfile
+
     cProfile.run("main()", "stats")
     import pstats
-    p = pstats.Stats("stats")
-    p.sort_stats("cumulative").print_stats(10)
 
+    p = pstats.Stats("stats")
+    p.sort_stats("cumulative").print_stats(20)
