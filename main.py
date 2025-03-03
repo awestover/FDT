@@ -21,6 +21,8 @@ def main():
     save_every = num_episodes//10
     eval_every = num_episodes//100
     checkpoint_dir = "./checkpoints"
+    if PROFILING_ONLY:
+        num_episodes = 50
 
     # Curriculum learning parameters
     initial_difficulty = 0.5  # Start with very easy mazes
