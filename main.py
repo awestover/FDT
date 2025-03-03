@@ -17,9 +17,9 @@ def main():
     Now with curriculum learning to improve training.
     """
     # Training parameters
-    num_episodes = 50_000  # More episodes for better results
+    num_episodes = 5000  # More episodes for better results
     save_every = num_episodes//10
-    eval_every = 50
+    eval_every = num_episodes//100
     checkpoint_dir = "./checkpoints"
 
     # Curriculum learning parameters
