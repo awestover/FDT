@@ -295,87 +295,87 @@ class GridWorldEnv:
 
     # This method handles resetting a subset of environments
     # Used when we need to reset just the environments that are done
-    def reset_subset(self, indices, maze_difficulty=0.5, dist_to_end=0.0):
-        """
-        Reset only specific environments indexed by indices
+    # def reset_subset(self, indices, maze_difficulty=0.5, dist_to_end=0.0):
+    #     """
+    #     Reset only specific environments indexed by indices
 
-        Args:
-            indices: Boolean mask or integer indices of environments to reset
-            maze_difficulty: Float or tensor of maze difficulties (0.0-1.0)
-            dist_to_end: Float or tensor of distances to end (0.0-1.0)
+    #     Args:
+    #         indices: Boolean mask or integer indices of environments to reset
+    #         maze_difficulty: Float or tensor of maze difficulties (0.0-1.0)
+    #         dist_to_end: Float or tensor of distances to end (0.0-1.0)
 
-        Returns:
-            Tensor of shape [num_reset, channels, grid_size, grid_size]
-        """
-        # Convert indices to boolean mask if it's a tensor of indices
-        if not isinstance(indices, torch.Tensor) or indices.dtype != torch.bool:
-            mask = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
-            mask[indices] = True
-        else:
-            mask = indices
+    #     Returns:
+    #         Tensor of shape [num_reset, channels, grid_size, grid_size]
+    #     """
+    #     # Convert indices to boolean mask if it's a tensor of indices
+    #     if not isinstance(indices, torch.Tensor) or indices.dtype != torch.bool:
+    #         mask = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
+    #         mask[indices] = True
+    #     else:
+    #         mask = indices
 
-        num_to_reset = mask.sum().item()
+    #     num_to_reset = mask.sum().item()
 
-        # Handle scalar difficulty and distance
-        if not isinstance(maze_difficulty, torch.Tensor):
-            maze_difficulty = torch.full(
-                (num_to_reset,), maze_difficulty, dtype=DTYPE, device=self.device
-            )
-        elif (
-            len(maze_difficulty.shape) > 0
-            and maze_difficulty.shape[0] == self.batch_size
-        ):
-            maze_difficulty = maze_difficulty[mask]
+    #     # Handle scalar difficulty and distance
+    #     if not isinstance(maze_difficulty, torch.Tensor):
+    #         maze_difficulty = torch.full(
+    #             (num_to_reset,), maze_difficulty, dtype=DTYPE, device=self.device
+    #         )
+    #     elif (
+    #         len(maze_difficulty.shape) > 0
+    #         and maze_difficulty.shape[0] == self.batch_size
+    #     ):
+    #         maze_difficulty = maze_difficulty[mask]
 
-        if not isinstance(dist_to_end, torch.Tensor):
-            dist_to_end = torch.full(
-                (num_to_reset,), dist_to_end, dtype=DTYPE, device=self.device
-            )
-        elif len(dist_to_end.shape) > 0 and dist_to_end.shape[0] == self.batch_size:
-            dist_to_end = dist_to_end[mask]
+    #     if not isinstance(dist_to_end, torch.Tensor):
+    #         dist_to_end = torch.full(
+    #             (num_to_reset,), dist_to_end, dtype=DTYPE, device=self.device
+    #         )
+    #     elif len(dist_to_end.shape) > 0 and dist_to_end.shape[0] == self.batch_size:
+    #         dist_to_end = dist_to_end[mask]
 
-        # Generate new mazes just for the specified environments
-        new_grids = torch.zeros(
-            (num_to_reset, self.num_channels, GRID_SIZE, GRID_SIZE),
-            dtype=DTYPE,
-            device=self.device,
-        )
+    #     # Generate new mazes just for the specified environments
+    #     new_grids = torch.zeros(
+    #         (num_to_reset, self.num_channels, GRID_SIZE, GRID_SIZE),
+    #         dtype=DTYPE,
+    #         device=self.device,
+    #     )
 
-        fancy_generate_maze_vectorized(
-            new_grids,
-            device=self.device,
-            nchannels=self.num_channels,
-            size=GRID_SIZE,
-            difficulty=maze_difficulty,
-            batch_size=num_to_reset,
-        )
+    #     fancy_generate_maze_vectorized(
+    #         new_grids,
+    #         device=self.device,
+    #         nchannels=self.num_channels,
+    #         size=GRID_SIZE,
+    #         difficulty=maze_difficulty,
+    #         batch_size=num_to_reset,
+    #     )
 
-        # Clear agent channel before placing agents
-        new_grids[:, 1].zero_()
+    #     # Clear agent channel before placing agents
+    #     new_grids[:, 1].zero_()
 
-        # Compute starting positions for the reset agents
-        new_positions = torch.zeros(
-            (num_to_reset, 2), dtype=torch.long, device=self.device
-        )
-        new_positions[:, 0] = f_vectorized(dist_to_end, num_to_reset, self.device)
-        new_positions[:, 1] = f_vectorized(dist_to_end, num_to_reset, self.device)
+    #     # Compute starting positions for the reset agents
+    #     new_positions = torch.zeros(
+    #         (num_to_reset, 2), dtype=torch.long, device=self.device
+    #     )
+    #     new_positions[:, 0] = f_vectorized(dist_to_end, num_to_reset, self.device)
+    #     new_positions[:, 1] = f_vectorized(dist_to_end, num_to_reset, self.device)
 
-        # Place agents in the new grids
-        batch_indices = torch.arange(num_to_reset, device=self.device)
-        new_grids[batch_indices, 1, new_positions[:, 0], new_positions[:, 1]] = 1
+    #     # Place agents in the new grids
+    #     batch_indices = torch.arange(num_to_reset, device=self.device)
+    #     new_grids[batch_indices, 1, new_positions[:, 0], new_positions[:, 1]] = 1
 
-        # Update the main grids and agent positions
-        self.grids[mask] = new_grids
-        self.agent_positions[mask] = new_positions
+    #     # Update the main grids and agent positions
+    #     self.grids[mask] = new_grids
+    #     self.agent_positions[mask] = new_positions
 
-        # Reset step counters and visit counts for reset environments
-        self.steps_count[mask] = 0
-        self.visit_counts[mask].zero_()
+    #     # Reset step counters and visit counts for reset environments
+    #     self.steps_count[mask] = 0
+    #     self.visit_counts[mask].zero_()
 
-        # Mark reset environments as active
-        self.active_envs[mask] = True
+    #     # Mark reset environments as active
+    #     self.active_envs[mask] = True
 
-        return new_grids
+    #     return new_grids
 
     def step(self, actions, active_mask=None):
         """
@@ -402,60 +402,57 @@ class GridWorldEnv:
         dones = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
 
         # Only process active environments
-        if active_mask.any():
-            # Get batch indices for active environments
-            batch_indices = torch.arange(self.batch_size, device=self.device)[
-                active_mask
-            ]
+        # Get batch indices for active environments
+        batch_indices = torch.arange(self.batch_size, device=self.device)[active_mask]
 
-            # Clear agent positions in active environments
-            self.grids[active_mask, 1].zero_()
+        # Clear agent positions in active environments
+        self.grids[active_mask, 1].zero_()
 
-            # Get wall positions for collision checking
-            walls = self.grids[active_mask, 0]
+        # Get wall positions for collision checking
+        walls = self.grids[active_mask, 0]
 
-            # Process movement for each active environment
-            for i, b_idx in enumerate(batch_indices):
-                action = actions[b_idx]
-                y, x = self.agent_positions[b_idx]
+        # Process movement for each active environment
+        for i, b_idx in enumerate(batch_indices):
+            action = actions[b_idx]
+            y, x = self.agent_positions[b_idx]
 
-                # Get movement direction
-                dy, dx = self.move_map[action.item()]
+            # Get movement direction
+            dy, dx = self.move_map[action.item()]
 
-                # Calculate new position
-                new_y = torch.clamp(y + dy, 0, self.grid_size - 1)
-                new_x = torch.clamp(x + dx, 0, self.grid_size - 1)
+            # Calculate new position
+            new_y = torch.clamp(y + dy, 0, self.grid_size - 1)
+            new_x = torch.clamp(x + dx, 0, self.grid_size - 1)
 
-                # Check for wall collision
-                if walls[i, new_y, new_x] == 0:  # No wall at new position
-                    # Update agent position
-                    self.agent_positions[b_idx, 0] = new_y
-                    self.agent_positions[b_idx, 1] = new_x
+            # Check for wall collision
+            if walls[i, new_y, new_x] == 0:  # No wall at new position
+                # Update agent position
+                self.agent_positions[b_idx, 0] = new_y
+                self.agent_positions[b_idx, 1] = new_x
 
-                # Update visit counts
-                self.visit_counts[
-                    b_idx,
-                    self.agent_positions[b_idx, 0],
-                    self.agent_positions[b_idx, 1],
-                ] += 1
+            # Update visit counts
+            self.visit_counts[
+                b_idx,
+                self.agent_positions[b_idx, 0],
+                self.agent_positions[b_idx, 1],
+            ] += 1
 
-                # Place agent in new position
-                self.grids[
-                    b_idx,
-                    1,
-                    self.agent_positions[b_idx, 0],
-                    self.agent_positions[b_idx, 1],
-                ] = 1
+            # Place agent in new position
+            self.grids[
+                b_idx,
+                1,
+                self.agent_positions[b_idx, 0],
+                self.agent_positions[b_idx, 1],
+            ] = 1
 
-                # Check for goal reached
-                if (self.agent_positions[b_idx] == self.goal_positions[b_idx]).all():
-                    rewards[b_idx] = 1.0
-                    dones[b_idx] = True
+            # Check for goal reached
+            if (self.agent_positions[b_idx] == self.goal_positions[b_idx]).all():
+                rewards[b_idx] = 1.0
+                dones[b_idx] = True
 
-                # Check for max steps reached
-                self.steps_count[b_idx] += 1
-                if self.steps_count[b_idx] >= self.max_steps:
-                    dones[b_idx] = True
+            # Check for max steps reached
+            self.steps_count[b_idx] += 1
+            if self.steps_count[b_idx] >= self.max_steps:
+                dones[b_idx] = True
 
         return self.grids.clone(), rewards, dones
 
@@ -584,7 +581,9 @@ class BatchedDQNAgent:
 
         return loss.item()
 
-    def push_transitions(self, states, actions, rewards, next_states, dones):
+    def push_transitions(
+        self, states, actions, rewards, next_states, dones, active_mask
+    ):
         """
         Push multiple transitions to the replay buffer
 
@@ -595,7 +594,13 @@ class BatchedDQNAgent:
             next_states: Batch of next states
             dones: Batch of done flags
         """
-        self.replay_buffer.push_batch(states, actions, rewards, next_states, dones)
+        self.replay_buffer.push_batch(
+            states[active_mask],
+            actions[active_mask],
+            rewards[active_mask],
+            next_states[active_mask],
+            dones[active_mask],
+        )
 
     def set_epsilon(self, episode, total_episodes):
         """

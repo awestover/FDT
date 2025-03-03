@@ -1,5 +1,4 @@
 from deps import *
-import random
 import torch
 import os
 
@@ -7,6 +6,7 @@ PROFILING_ONLY = True
 PLOTTING = False
 if PLOTTING:
     from plotting import setup_plotting, update_plots
+    import matplotlib.pyplot as plt
 
 # TODO:
 # choose BUFFER_CAPACITY to max out GPU memory
@@ -65,28 +65,17 @@ def main():
     difficulties = torch.ones(BSZ, device=device) * initial_difficulty
     distances = torch.ones(BSZ, device=device) * init_dist_to_end
     states = env.reset(difficulties, distances)
+    active_envs = torch.ones(BSZ, dtype=torch.bool, device=device)
 
     # Fill buffer with a couple random actions
     for _ in range(MAX_STEPS // 10):
         actions = torch.randint(0, 4, (BSZ,), device=device)
-        next_states, rewards, dones = env.step(actions)
-        agent.push_transitions(states, actions, rewards, next_states, dones)
+        next_states, rewards, dones = env.step(actions, active_envs)
+        agent.push_transitions(
+            states, actions, rewards, next_states, dones, active_envs
+        )
         states = next_states
-
-        # Reset states for done environments
-        if dones.any():
-            # Get new states for the done environments
-            reset_states = env.reset_subset(dones, difficulties, distances)
-
-            # Create a mask for updating only done environments
-            done_mask = dones.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-
-            # Create temporary tensor with same shape as full states
-            expanded_reset_states = torch.zeros_like(states)
-            expanded_reset_states[dones] = reset_states
-
-            # Update only the states that are done
-            states = torch.where(done_mask, expanded_reset_states, states)
+        active_envs &= ~dones
 
     print(f"Starting training with {BSZ} parallel environments")
     print(f"Target: {NUM_EPISODES} total episodes")
@@ -94,7 +83,6 @@ def main():
     # Keep track of steps per episode for each environment
     env_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
     env_episode_rewards = torch.zeros(BSZ, device=device)
-    episodes_completed = 0
 
     # Main training loop - we'll run this until we complete the target number of episodes
     for episode in range(NUM_EPISODES):
@@ -136,11 +124,12 @@ def main():
 
             # Store transitions in replay buffer
             agent.push_transitions(
-                states[active_mask],
-                actions[active_mask],
-                rewards[active_mask],
-                next_states[active_mask],
-                dones[active_mask],
+                states,
+                actions,
+                rewards,
+                next_states,
+                dones,
+                active_mask,
             )
 
             # Update model
@@ -159,7 +148,6 @@ def main():
                     if new_dones[i]:
                         episode_lengths.append(env_episode_steps[i].item())
                         all_rewards.append(env_episode_rewards[i].item())
-                        episodes_completed += 1
 
             # Update states for environments that are still active
             # We only need to update active environments as done ones will be reset
@@ -167,28 +155,13 @@ def main():
                 active_mask.unsqueeze(1).unsqueeze(2).unsqueeze(3), next_states, states
             )
 
-            # Reset environments that are newly done
-            if new_dones.any():
-                # Get new states for the newly done environments using reset_subset
-                new_env_states = env.reset_subset(new_dones, difficulties, distances)
-
-                # Create a mask for updating only newly done environments
-                update_mask = new_dones.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-
-                # Expand new_env_states to match the batch size
-                expanded_new_states = torch.zeros_like(states)
-                expanded_new_states[new_dones] = new_env_states
-
-                # Update states for newly done environments
-                states = torch.where(update_mask, expanded_new_states, states)
-
         # Calculate loss for this batch of episodes
         if losses:
             batch_loss = sum(losses) / len(losses)
             all_losses.append(batch_loss)
 
         # Print progress
-        if episodes_completed % 10 == 0 or (episodes_completed % BSZ == 0):
+        if (episode + 1) % 10 == 0:
             recent_rewards = all_rewards[-BSZ:]
             recent_lengths = episode_lengths[-BSZ:]
 
@@ -197,7 +170,7 @@ def main():
             avg_loss = sum(all_losses[-10:]) / max(1, len(all_losses[-10:]))
 
             print(
-                f"Episodes {episodes_completed}/{NUM_EPISODES} | "
+                f"Episodes {episode}/{NUM_EPISODES} | "
                 f"Reward: {avg_reward:.2f} | "
                 f"Length: {avg_length:.1f} | "
                 f"Loss: {avg_loss:.6f} | "
@@ -208,7 +181,7 @@ def main():
             if PLOTTING:
                 update_plots(
                     plot_elements,
-                    episodes_completed,
+                    episode,
                     avg_reward,
                     avg_length,
                     avg_loss,
@@ -216,24 +189,20 @@ def main():
                 )
 
         # Save checkpoint
-        if episodes_completed > 0 and episodes_completed % SAVE_EVERY < BSZ:
-            checkpoint_path = os.path.join(
-                checkpoint_dir, f"checkpoint_{episodes_completed}.pth"
-            )
+        if (episode + 1) % SAVE_EVERY == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode}.pth")
             torch.save(
                 {"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path
             )
-            print(f"Checkpoint saved at episode {episodes_completed}")
+            print(f"Checkpoint saved at episode {episode}")
 
             if PLOTTING:
-                plot_path = os.path.join(
-                    checkpoint_dir, f"training_plot_{episodes_completed}.png"
-                )
+                plot_path = os.path.join(checkpoint_dir, f"training_plot_{episode}.png")
                 plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches="tight")
 
         # Evaluation phase
-        if episodes_completed > 0 and episodes_completed % EVAL_EVERY < BSZ:
-            print(f"Running evaluation at {episodes_completed} episodes...")
+        if (episode + 1) % EVAL_EVERY == 0:
+            print(f"Running evaluation at {episode} episodes...")
             eval_rewards = []
             eval_lengths = []
 
@@ -321,7 +290,7 @@ def main():
             if PLOTTING:
                 update_plots(
                     plot_elements,
-                    episodes_completed,
+                    episode,
                     None,
                     None,
                     None,
