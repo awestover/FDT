@@ -142,3 +142,13 @@ Finally, I'll iterate this whole thing for 10^6 episodes
 
 Which should take about 2 minutes.
 
+---
+
+Asking Claude to write 600 line diffs is not a good idea it turns out. 
+If I could figure out how to get Claude to iterate, test whether
+its code compiles, and then fix it when it doesnt compile, then
+it'd be fine. But as is you should ask for much smaller diffs
+when doing complicated things.
+
+But I think it's working now.
+
