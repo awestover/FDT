@@ -1,4 +1,6 @@
 import matplotlib.pyplot as plt
+import numpy as np
+
 # Initialize plotting at the beginning of your main() function
 def setup_plotting():
     """

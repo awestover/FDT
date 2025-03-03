@@ -1,3 +1,5 @@
+![checkpoints/trainig_plot.png](checkpoints/trainig_plot.png)
+
 Ideas for fixing this 
 
 1. Choose an easier problem lol

@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-
 from deps import *
 
 #  def create_movie(env, agent, ax, movie_filename='agent_journey.mp4'):
@@ -48,9 +47,9 @@ def play_agent(env, agent, ax):
         plt.pause(0.01)
 
 if __name__ == '__main__':
-    env = GridWorldEnv(max_steps=100)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    agent = init_agent(device)
+    env = GridWorldEnv(device, max_steps=100)
+    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=64, update_target_every=200)
     checkpoint_path = 'checkpoints/checkpoint_100.pth'
     checkpoint = torch.load(checkpoint_path, weights_only=True) # weights_only=False if it's broken
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
@@ -66,6 +65,4 @@ if __name__ == '__main__':
     for i in range(5):
         print("episode ", i)
         play_agent(env, agent, ax)
-
-    #  create_movie(env, agent, ax, movie_filename='agent_journey.mp4')
 

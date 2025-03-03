@@ -1,14 +1,12 @@
-import numpy as np
+from deps import *
+from plotting import setup_plotting, update_plots
 import random
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-from collections import deque
 import os
-from deps import *
 
-def optimized_main():
+def main():
+    plot_elements = setup_plotting()
+
     """
     Optimized training loop for DQN agent with performance enhancements
     especially focused on speeding up the one-hot encoding process.
@@ -16,7 +14,7 @@ def optimized_main():
     """
     # Training parameters
     num_episodes = 50_000  # More episodes for better results
-    save_every = num_episodes//5
+    save_every = num_episodes//10
     eval_every = 50
     checkpoint_dir = "./checkpoints"
 
@@ -121,12 +119,22 @@ def optimized_main():
                 f"Difficulty: {cur_difficulty:.2f} | "
                 f"Dist To End: {cur_dist_to_end:.2f}"
             )
+            update_plots(
+                plot_elements,
+                episode,
+                episode_reward,
+                steps,
+                episode_loss if losses else None,
+                agent.epsilon
+            )
 
-        # Save checkpoint
-        #  if (episode + 1) % save_every == 0:
-        #      checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
-        #      torch.save({"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path)
-        #      print(f"Checkpoint saved at episode {episode+1}")
+        #  Save checkpoint
+        if (episode + 1) % save_every == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f"checkpoint_{episode+1}.pth")
+            torch.save({"model_state_dict": agent.policy_net.state_dict()}, checkpoint_path)
+            print(f"Checkpoint saved at episode {episode+1}")
+            plot_path = os.path.join(checkpoint_dir, f"training_plot_{episode+1}.png")
+            plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches='tight')
 
         # Evaluation phase
         if (episode + 1) % eval_every == 0:
@@ -150,14 +158,27 @@ def optimized_main():
 
             avg_eval_reward = sum(eval_rewards) / len(eval_rewards)
             print(f"Evaluation: Avg Reward = {avg_eval_reward:.2f}")
+            # Update evaluation plots
+            update_plots(
+                plot_elements,
+                episode,
+                None,
+                None,
+                None,
+                None,
+                is_eval=True,
+                eval_reward=avg_eval_reward
+            )
 
     print("Training completed!")
+    plt.ioff()
+    plt.close()
 
 # You can run this with profiling to verify the improvements
 if __name__ == "__main__":
     import cProfile
-    cProfile.run("optimized_main()", "optimized_stats")
+    cProfile.run("main()", "stats")
     import pstats
-    p = pstats.Stats("optimized_stats")
+    p = pstats.Stats("stats")
     p.sort_stats("cumulative").print_stats(10)
 
