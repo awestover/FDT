@@ -201,6 +201,7 @@ def main():
                 plot_elements["fig"].savefig(plot_path, dpi=300, bbox_inches="tight")
 
         # Evaluation phase
+        # Evaluation phase
         if (episode + 1) % EVAL_EVERY == 0:
             print(f"Running evaluation at {episode} episodes...")
             eval_rewards = []
@@ -210,71 +211,54 @@ def main():
             original_epsilon = agent.epsilon
             agent.epsilon = agent.epsilon_min
 
-            # Reset all environments with current difficulty but vary start distances
-            eval_difficulties = torch.ones(BSZ, device=device) * cur_difficulty
-            eval_distances = torch.ones(BSZ, device=device) * cur_dist_to_end
-
             # Run multiple evaluation batches to get enough samples
             num_eval_batches = 5  # Run 5 batches of BSZ episodes
 
             for _ in range(num_eval_batches):
+                # Reset all environments with current difficulty
+                eval_difficulties = torch.ones(BSZ, device=device) * cur_difficulty
+                eval_distances = torch.ones(BSZ, device=device) * cur_dist_to_end
                 eval_states = env.reset(eval_difficulties, eval_distances)
+
                 eval_episode_rewards = torch.zeros(BSZ, device=device)
                 eval_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
                 eval_done_mask = torch.zeros(BSZ, dtype=torch.bool, device=device)
 
-                while not eval_done_mask.all():
+                # Run until all environments are done or max steps reached
+                max_eval_steps = MAX_STEPS
+                for _ in range(max_eval_steps):
+                    # Break if all environments are done
+                    if eval_done_mask.all():
+                        break
+
                     eval_actions = agent.select_actions(eval_states)
 
                     # Only execute actions for environments that are not done
                     eval_active_mask = ~eval_done_mask
-                    eval_next_states, eval_rewards, eval_dones = env.step(
+                    eval_next_states, eval_rewards_step, eval_dones = env.step(
                         eval_actions, eval_active_mask
                     )
 
                     # Update accumulators for active environments
-                    eval_episode_rewards[eval_active_mask] += eval_rewards[
+                    eval_episode_rewards[eval_active_mask] += eval_rewards_step[
                         eval_active_mask
                     ]
                     eval_episode_steps[eval_active_mask] += 1
 
-                    # Track newly completed episodes
-                    eval_new_dones = eval_dones & ~eval_done_mask
+                    # Update done mask - environments stay done once they're done
                     eval_done_mask = eval_done_mask | eval_dones
 
-                    # Record completed episode stats
-                    for i in range(BSZ):
-                        if eval_new_dones[i]:
-                            eval_rewards.append(eval_episode_rewards[i].item())
-                            eval_lengths.append(eval_episode_steps[i].item())
-
-                    # Update states for environments that are still active
+                    # Update states only for environments that are still active
                     eval_states = torch.where(
                         eval_active_mask.unsqueeze(1).unsqueeze(2).unsqueeze(3),
                         eval_next_states,
                         eval_states,
                     )
 
-                    # Reset environments that are newly done
-                    if eval_new_dones.any():
-                        # Get new states for the newly done environments
-                        new_eval_states = env.reset_subset(
-                            eval_new_dones, eval_difficulties, eval_distances
-                        )
-
-                        # Create a mask for updating only newly done environments
-                        update_mask = (
-                            eval_new_dones.unsqueeze(1).unsqueeze(2).unsqueeze(3)
-                        )
-
-                        # Expand new_eval_states to match the batch size
-                        expanded_new_states = torch.zeros_like(eval_states)
-                        expanded_new_states[eval_new_dones] = new_eval_states
-
-                        # Update states for newly done environments
-                        eval_states = torch.where(
-                            update_mask, expanded_new_states, eval_states
-                        )
+                # After loop completion, record all environment stats
+                for i in range(BSZ):
+                    eval_rewards.append(eval_episode_rewards[i].item())
+                    eval_lengths.append(eval_episode_steps[i].item())
 
             # Restore original epsilon
             agent.epsilon = original_epsilon
