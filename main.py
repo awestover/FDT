@@ -3,7 +3,7 @@ import random
 import torch
 import os
 
-PROFILING_ONLY = True
+PROFILING_ONLY = False
 PLOTTING = False
 if PLOTTING:
     from plotting import setup_plotting, update_plots
