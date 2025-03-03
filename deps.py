@@ -73,7 +73,7 @@ class GridWorldEnv:
         agentc = int(GRID_SIZE*(1 - nprand.rand()*dist_to_end))
         self.agent_pos = (agentr, agentc)
 
-        self.grid[1, 0, 0] = 1
+        self.grid[1, agentr, agentc] = 1
         self.goal_pos = (GRID_SIZE - 1, GRID_SIZE - 1)
         self.steps = 0
         self.visit_count.zero_()
