@@ -15,7 +15,7 @@ def optimized_main():
     Now with curriculum learning to improve training.
     """
     # Training parameters
-    num_episodes = 100  # More episodes for better results
+    num_episodes = 50_000  # More episodes for better results
     save_every = num_episodes//5
     eval_every = 50
     checkpoint_dir = "./checkpoints"
