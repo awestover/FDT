@@ -379,13 +379,13 @@ class GridWorldEnv:
 
     def step(self, actions, active_mask=None):
         """
-        Execute actions in all active environments
-
+        Execute actions in all active environments - fully vectorized version
+        
         Args:
             actions: Tensor of action indices [batch_size]
             active_mask: Boolean mask indicating which environments are active [batch_size]
-                         If None, all environments are considered active
-
+                        If None, all environments are considered active
+        
         Returns:
             next_states: Updated grid states
             rewards: Rewards for each environment
@@ -393,69 +393,82 @@ class GridWorldEnv:
         """
         # If no active mask is provided, consider all environments active
         if active_mask is None:
-            active_mask = torch.ones(
-                self.batch_size, dtype=torch.bool, device=self.device
-            )
-
+            active_mask = torch.ones(self.batch_size, dtype=torch.bool, device=self.device)
+        
         # Initialize rewards and dones for all environments
         rewards = torch.zeros(self.batch_size, device=self.device)
         dones = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
-
-        # Only process active environments
-        # Get batch indices for active environments
-        batch_indices = torch.arange(self.batch_size, device=self.device)[active_mask]
-
+        
+        # Skip if no environments are active
+        if not active_mask.any():
+            return self.grids.clone(), rewards, dones
+        
         # Clear agent positions in active environments
         self.grids[active_mask, 1].zero_()
-
-        # Get wall positions for collision checking
-        walls = self.grids[active_mask, 0]
-
-        # Process movement for each active environment
-        for i, b_idx in enumerate(batch_indices):
-            action = actions[b_idx]
-            y, x = self.agent_positions[b_idx]
-
-            # Get movement direction
-            dy, dx = self.move_map[action.item()]
-
-            # Calculate new position
-            new_y = torch.clamp(y + dy, 0, self.grid_size - 1)
-            new_x = torch.clamp(x + dx, 0, self.grid_size - 1)
-
-            # Check for wall collision
-            if walls[i, new_y, new_x] == 0:  # No wall at new position
-                # Update agent position
-                self.agent_positions[b_idx, 0] = new_y
-                self.agent_positions[b_idx, 1] = new_x
-
-            # Update visit counts
-            self.visit_counts[
-                b_idx,
-                self.agent_positions[b_idx, 0],
-                self.agent_positions[b_idx, 1],
-            ] += 1
-
-            # Place agent in new position
-            self.grids[
-                b_idx,
-                1,
-                self.agent_positions[b_idx, 0],
-                self.agent_positions[b_idx, 1],
-            ] = 1
-
-            # Check for goal reached
-            if (self.agent_positions[b_idx] == self.goal_positions[b_idx]).all():
-                rewards[b_idx] = 1.0
-                dones[b_idx] = True
-
-            # Check for max steps reached
-            self.steps_count[b_idx] += 1
-            if self.steps_count[b_idx] >= self.max_steps:
-                dones[b_idx] = True
-
+        
+        # Create a lookup tensor for the move_map - precompute this once in __init__ for efficiency
+        move_lookup = torch.tensor([
+            [-1, 0],  # up
+            [1, 0],   # down
+            [0, -1],  # left
+            [0, 1]    # right
+        ], device=self.device)
+        
+        # Get moves for all active environments (batch_size x 2)
+        active_moves = torch.zeros((self.batch_size, 2), dtype=torch.long, device=self.device)
+        active_moves[active_mask] = move_lookup[actions[active_mask]]
+        
+        # Calculate new potential positions for all environments
+        new_positions = torch.clamp(
+            self.agent_positions + active_moves,
+            0, self.grid_size - 1
+        )
+        
+        # Create batch indices tensor for advanced indexing
+        batch_indices = torch.arange(self.batch_size, device=self.device)
+        
+        # Check for wall collisions (0 = no wall, can move)
+        # First create a mask of environments where we need to check walls
+        check_mask = active_mask.clone()
+        # Then check walls at the new positions
+        wall_free = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
+        wall_free[check_mask] = self.grids[
+            batch_indices[check_mask], 
+            0, 
+            new_positions[check_mask, 0], 
+            new_positions[check_mask, 1]
+        ] == 0
+        
+        # Create mask of valid moves (active and no wall)
+        valid_move_mask = active_mask & wall_free
+        
+        # Update agent positions where moves are valid
+        self.agent_positions[valid_move_mask] = new_positions[valid_move_mask]
+        
+        # Update visit counts using advanced indexing
+        row_indices = self.agent_positions[:, 0]
+        col_indices = self.agent_positions[:, 1]
+        self.visit_counts[batch_indices[active_mask], row_indices[active_mask], col_indices[active_mask]] += 1
+        
+        # Place agents in their positions
+        self.grids[batch_indices[active_mask], 1, row_indices[active_mask], col_indices[active_mask]] = 1
+        
+        # Check for goals reached - compare each agent position to its goal position
+        at_goal_mask = torch.all(self.agent_positions == self.goal_positions, dim=1)
+        goal_reached_mask = active_mask & at_goal_mask
+        
+        # Update rewards and mark as done for environments reaching goals
+        rewards[goal_reached_mask] = 1.0
+        dones[goal_reached_mask] = True
+        
+        # Update steps count for active environments
+        self.steps_count[active_mask] += 1
+        
+        # Check for max steps reached
+        max_steps_mask = self.steps_count >= self.max_steps
+        dones[active_mask & max_steps_mask] = True
+        
         return self.grids.clone(), rewards, dones
-
 
 class BatchedDQNAgent:
     def __init__(
@@ -745,3 +758,4 @@ class TensorReplayBuffer:
             self.next_states[batch_indices],
             self.dones[batch_indices].squeeze(1),  # Remove extra dimension
         )
+

@@ -18,7 +18,8 @@ def main():
     device = torch.device("cuda" if ON_GPU else "cpu")
     print(f"Using device: {device}")
     MAX_STEPS = 100
-    BSZ = 1024 if ON_GPU else 32
+    # BSZ = 1024 if ON_GPU else 32
+    BSZ = 32
     UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
     BUFFER_CAPACITY = 100_000
     NUM_EPISODES = 100_000 if not PROFILING_ONLY else 50
@@ -305,3 +306,4 @@ if __name__ == "__main__":
 
     p = pstats.Stats("stats")
     p.sort_stats("cumulative").print_stats(20)
+
