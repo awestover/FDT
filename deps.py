@@ -233,7 +233,8 @@ class GridWorldEnv:
             max_steps: Maximum steps per episode
             batch_size: Number of parallel environments
         """
-        self.num_channels = 3  # wall, agent, goal
+        self.position_history_length = 4  # Current + 3 previous positions
+        self.num_channels = 3 + self.position_history_length - 1  # wall, agent, goal, position history
         self.max_steps = max_steps
         self.grid_size = GRID_SIZE
         self.device = device
@@ -262,6 +263,10 @@ class GridWorldEnv:
         self.agent_positions = torch.zeros(
             (batch_size, 2), dtype=torch.long, device=self.device
         )
+        # Track position history (current + 3 previous)
+        self.position_history = torch.zeros(
+            (batch_size, self.position_history_length, 2), dtype=torch.long, device=self.device
+        )
         self.goal_positions = torch.full(
             (batch_size, 2), GRID_SIZE - 1, dtype=torch.long, device=self.device
         )
@@ -289,6 +294,8 @@ class GridWorldEnv:
 
         # Clear agent channel before placing agents
         self.grids[:, 1].zero_()
+        # Clear history channels
+        self.grids[:, 3:].zero_()
 
         # Compute starting positions for all agents in batch
         smallest_pos = int((GRID_SIZE-1)*(1-dist_to_end))
@@ -299,6 +306,10 @@ class GridWorldEnv:
         self.grids[
             batch_indices, 1, self.agent_positions[:, 0], self.agent_positions[:, 1]
         ] = 1
+
+        # Initialize position history with the starting position
+        self.position_history.zero_()
+        self.position_history[:, 0] = self.agent_positions
 
         # Reset step counters and visit counts
         self.steps_count.zero_()
@@ -339,6 +350,8 @@ class GridWorldEnv:
         # note that self.grids[active_mask, 1].zero_() doesn't work!!! 
         # because mask creates a copy?
         self.grids[active_mask, 1] = 0
+        # Clear history channels
+        self.grids[active_mask, 3:] = 0
         
         # Create a lookup tensor for the move_map - precompute this once in __init__ for efficiency
         move_lookup = torch.tensor([
@@ -376,8 +389,14 @@ class GridWorldEnv:
         # Create mask of valid moves (active and no wall)
         valid_move_mask = active_mask & wall_free
         
+        # First, shift the position history
+        self.position_history[:, 1:] = self.position_history[:, :-1].clone()
+        
         # Update agent positions where moves are valid
         self.agent_positions[valid_move_mask] = new_positions[valid_move_mask]
+        
+        # Update the most recent position in history
+        self.position_history[:, 0] = self.agent_positions
         
         # Update visit counts using advanced indexing
         row_indices = self.agent_positions[:, 0]
@@ -386,6 +405,17 @@ class GridWorldEnv:
         
         # Place agents in their positions
         self.grids[batch_indices[active_mask], 1, row_indices[active_mask], col_indices[active_mask]] = 1
+        
+        # Update history representation in the grid
+        for i in range(1, self.position_history_length):
+            pos_indices = self.position_history[:, i]
+            valid_history = (pos_indices.sum(dim=1) > 0)  # Check if history position is valid
+            valid_and_active = valid_history & active_mask
+            if valid_and_active.any():
+                self.grids[
+                    batch_indices[valid_and_active], i+2, 
+                    pos_indices[valid_and_active, 0], pos_indices[valid_and_active, 1]
+                ] = 1
         
         # Check for goals reached - compare each agent position to its goal position
         at_goal_mask = torch.all(self.agent_positions == self.goal_positions, dim=1)
@@ -461,7 +491,7 @@ class BatchedDQNAgent:
         self.env_batch_size = batch_size
 
         # Input channels and actions
-        self.input_channels = 3  # wall, agent, goal
+        self.input_channels = 6  # wall, agent, goal, plus 3 history positions
         self.num_actions = 4  # up, down, left, right
 
         # Initialize networks
@@ -747,10 +777,8 @@ if __name__ == "__main__":
     generate_maze(
         grids[:,0,:,:],
         bsz,
-        "cpu",
-        difficulty=1
+        "cpu"
     )
     import matplotlib.pyplot as plt
     plt.imshow(grids[0, 0,:,:].numpy(), cmap="binary")
     plt.show()
-
