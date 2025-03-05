@@ -21,9 +21,10 @@ NUM_EPISODES = 10**3 if not PROFILING_ONLY else 50
 SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
 EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
 MAZE_CACHE_SIZE = 10**6 if not PROFILING_ONLY else 1000
+PRINT_PROGRESS_EVERY = 1
 
 # Curriculum learning parameters
-initial_difficulty = 0.7
+initial_difficulty = 0.95
 final_difficulty = 1.0
 init_dist_to_end = 0.25
 final_dist_to_end = 1.0
@@ -146,7 +147,7 @@ def train_loop():
             all_losses.append(batch_loss)
 
         # Print progress
-        if (episode + 1) % 10 == 0:
+        if (episode + 1) % PRINT_PROGRESS_EVERY == 0:
             recent_rewards = all_rewards[-BSZ:]
             recent_lengths = episode_lengths[-BSZ:]
 
