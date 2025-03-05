@@ -73,6 +73,9 @@ for _ in range(MAX_STEPS // 10):
 
 print(f"Starting training with {BSZ} parallel environments, for {NUM_EPISODES} total episodes")
 
+def interp(a,b,r):
+    return a + (b-a)*(r**.5)
+
 def train_loop():
     # Keep track of steps per episode for each environment
     env_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
@@ -84,12 +87,8 @@ def train_loop():
 
         # Calculate current curriculum parameters
         progress = episode / NUM_EPISODES
-        cur_difficulty = initial_difficulty + progress * (
-            final_difficulty - initial_difficulty
-        )
-        cur_dist_to_end = init_dist_to_end + progress * (
-            final_dist_to_end - init_dist_to_end
-        )
+        cur_difficulty = interp(initial_difficulty, final_difficulty, progress)
+        cur_dist_to_end = interp(init_dist_to_end, final_dist_to_end, progress)
 
         # Reset all environments with current parameters
         states = env.reset(cur_difficulty, cur_dist_to_end)
