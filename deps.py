@@ -390,8 +390,8 @@ class GridWorldEnv:
         goal_reached_mask = active_mask & at_goal_mask
         
         # Update rewards and mark as done for environments reaching goals
-        rewards[active_mask] = -1.0
-        rewards[goal_reached_mask] = 10.0
+        rewards[active_mask] = -0.1
+        rewards[goal_reached_mask] = 0.5
         dones[goal_reached_mask] = True
         
         # Update steps count for active environments
@@ -584,15 +584,27 @@ class DQN(nn.Module):
             nn.Flatten(),
             nn.Linear(feature_size, 128),
             nn.ReLU(),
-            nn.Dropout(0.5),
+            nn.Dropout(0.2),
             nn.Linear(128, 64),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.1),
             nn.Linear(64, num_actions),
         )
 
+        self._initialize_weights()
+
     def forward(self, x):
         return self.mlp(self.cnn_layers(x))
+    
+    def _initialize_weights(self):
+    for m in self.modules():
+        if isinstance(m, nn.Conv2d) or isinstance(m, nn.Linear):
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+            if m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.BatchNorm2d):
+            nn.init.constant_(m.weight, 1)
+            nn.init.constant_(m.bias, 0)
 
 
 # -----------------------
