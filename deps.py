@@ -13,6 +13,8 @@ assert GRID_SIZE % 2 == 1, "GRID_SIZE must be an odd number for historical reaso
 DTYPE = torch.float32
 torch.set_default_dtype(DTYPE)
 
+TRY_MLP = True
+
 def generate_maze(buffer, batch_size, device):
     # For directions
     directions = torch.tensor([
@@ -403,6 +405,33 @@ class GridWorldEnv:
         
         return self.grids.clone(), rewards, dones
 
+class SimpleMLP(nn.Module):
+    def __init__(self, input_channels, num_actions):
+        super().__init__()
+        input_size = GS * GS * input_channels
+        self.model = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(input_size, 256),
+            nn.ReLU(),
+            nn.Linear(256, 128),
+            nn.ReLU(),
+            nn.Linear(128, 64),
+            nn.ReLU(),
+            nn.Linear(64, num_actions)
+        )
+        # Initialize weights
+        self._initialize_weights()
+
+    def forward(self, x):
+        return self.model(x)
+
+    def _initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
 class BatchedDQNAgent:
     def __init__(
         self,
@@ -436,8 +465,14 @@ class BatchedDQNAgent:
         self.num_actions = 4  # up, down, left, right
 
         # Initialize networks
-        self.policy_net = DQN(self.input_channels, self.num_actions).to(self.device)
-        self.target_net = DQN(self.input_channels, self.num_actions).to(self.device)
+        if TRY_MLP:
+            self.policy_net = SimpleMLP(self.input_channels, self.num_actions).to(self.device)
+            self.target_net = SimpleMLP(self.input_channels, self.num_actions).to(self.device)
+        else:
+            self.policy_net = DQN(self.input_channels, self.num_actions).to(self.device)
+            self.target_net = DQN(self.input_channels, self.num_actions).to(self.device)
+
+
         self.target_net.load_state_dict(self.policy_net.state_dict())
         self.target_net.eval()
 
@@ -560,7 +595,7 @@ class BatchedDQNAgent:
 
 class DQN(nn.Module):
     def __init__(self, input_channels, num_actions):
-        super(DQN, self).__init__()
+        super().__init__()
 
         # Calculate the feature size after convolutions and pooling
         feature_size = ((GRID_SIZE // 4) ** 2) * 4 * input_channels
