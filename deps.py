@@ -22,7 +22,8 @@ def generate_maze(buffer, batch_size, device):
         [0, -1]   # West
     ], device=device)
 
-    # Initialize mazes with all walls
+    # for historical reasons this is backwards
+    # we will return 1-mazes
     mazes = buffer
     mazes.fill_(0)
     
@@ -163,6 +164,7 @@ def generate_maze(buffer, batch_size, device):
             completed_mask = backtrack_mask & (top_ptr == 0)
             active[completed_mask] = False
     
+    mazes = 1 - mazes
     return mazes
 
 class MazeCache:
