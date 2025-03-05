@@ -71,7 +71,7 @@ def tensor_to_numpy_grid(tensor):
 
 
 def play_agent(env, agent, ax):
-    state = env.reset(maze_difficulty=0.7, dist_to_end=0.7)
+    state = env.reset(maze_difficulty=0.7, dist_to_end=0.25)
     for i in range(90):
         action = agent.select_actions(state)
         next_state, reward, done = env.step(action)

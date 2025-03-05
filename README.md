@@ -177,3 +177,10 @@ plan:
 - move on from this project: it has zero AIS value and I've
     already gained the educational benefits
 
+----
+
+another bug --- the maze cache thing doesnt actually let you
+choose different difficulty levels
+maybe not a huge deal since the mazes are super easy tho
+
+
