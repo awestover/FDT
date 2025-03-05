@@ -11,11 +11,11 @@ ON_GPU = torch.cuda.is_available()
 device = torch.device("cuda" if ON_GPU else "cpu")
 print(f"Using device: {device}")
 MAX_STEPS = 100
-BSZ = 1<<10 if ON_GPU else 32
+BSZ = 1<<12 if ON_GPU else 32
 UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
 # TODO:
 # choose BUFFER_CAPACITY to max out GPU memory
-BUFFER_CAPACITY = 10**5
+BUFFER_CAPACITY = 10**6
 # choose NUM_EPISODES to max out time
 NUM_EPISODES = 10**3 if not PROFILING_ONLY else 50
 SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
