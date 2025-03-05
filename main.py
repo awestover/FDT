@@ -2,7 +2,7 @@ from deps import *
 import torch
 import os
 
-PROFILING_ONLY = True
+PROFILING_ONLY = False
 PLOTTING = False
 if PLOTTING:
     from plotting import setup_plotting, update_plots
@@ -11,14 +11,13 @@ ON_GPU = torch.cuda.is_available()
 device = torch.device("cuda" if ON_GPU else "cpu")
 print(f"Using device: {device}")
 MAX_STEPS = 100
-# BSZ = 1024 if ON_GPU else 32
-BSZ = 32
+BSZ = 4096 if ON_GPU else 32
 UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
 # TODO:
 # choose BUFFER_CAPACITY to max out GPU memory
 BUFFER_CAPACITY = 10**5
 # choose NUM_EPISODES to max out time
-NUM_EPISODES = 10**5 if not PROFILING_ONLY else 50
+NUM_EPISODES = 10**4 if not PROFILING_ONLY else 50
 SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
 EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
 # might wanna try 10**6
