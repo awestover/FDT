@@ -152,3 +152,22 @@ when doing complicated things.
 
 But I think it's working now.
 
+
+----
+
+i wish i were using priority replay buffer. 
+
+but the plan for now is --- cache mazes, 
+then just let it run and hope it learns
+
+
+----
+
+
+BSZ 1024
+MAX_EP_LENGTH 100
+NUM_EPISODES 10^5
+
+10^(3 + 2 + 5) = 10^10
+
+

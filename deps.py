@@ -186,9 +186,59 @@ def generate_maze(buffer, batch_size, device, difficulty):
     
     return mazes
 
+class MazeCache:
+    def __init__(self, device, batch_size, num_mazes=1_000_000):
+        """
+        Pre-generate and cache a large number of mazes
+        
+        Args:
+            device: The torch device to place tensors on
+            batch_size: Number of parallel environments
+            num_mazes: Total number of mazes to pre-generate
+        """
+        self.device = device
+        self.batch_size = batch_size
+        self.num_mazes = num_mazes
+        
+        # Calculate how many batches of mazes to generate
+        self.batch_count = (num_mazes + batch_size - 1) // batch_size
+        
+        # Pre-allocate tensor for all mazes
+        self.mazes = torch.zeros(
+            (num_mazes, GRID_SIZE, GRID_SIZE),
+            dtype=DTYPE,
+            device=device
+        )
+        
+        print(f"Pre-generating {num_mazes} mazes...")
+        
+        # Generate mazes in batches to avoid memory issues
+        for i in range(self.batch_count):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, num_mazes)
+            current_batch_size = end_idx - start_idx
+            
+            # Generate one batch of mazes
+            maze_batch = torch.zeros(
+                (current_batch_size, GRID_SIZE, GRID_SIZE),
+                dtype=DTYPE,
+                device=device
+            )
+            generate_maze(maze_batch, current_batch_size, device, difficulty=1.0)
+            
+            # Store in cache
+            self.mazes[start_idx:end_idx] = maze_batch
+            
+        print(f"Finished generating {num_mazes} mazes")
+
+    def get_random_mazes(self, batch_size):
+        """Return a batch of random mazes from the cache"""
+        indices = torch.randint(0, self.num_mazes, (batch_size,), device=self.device)
+        return self.mazes[indices]
+
 
 class GridWorldEnv:
-    def __init__(self, device, max_steps, batch_size):
+    def __init__(self, device, max_steps, batch_size, maze_cache):
         """
         Batched version of GridWorldEnv that handles multiple environments in parallel
 
@@ -232,6 +282,8 @@ class GridWorldEnv:
         # Track active environments (not done yet)
         self.active_envs = torch.ones(batch_size, dtype=torch.bool, device=self.device)
 
+        self.maze_cache = maze_cache
+
         self.reset()
 
     def reset(self, maze_difficulty=0.5, dist_to_end=0.0):
@@ -245,7 +297,7 @@ class GridWorldEnv:
         Returns:
             Tensor of shape [batch_size, channels, grid_size, grid_size]
         """
-        generate_maze(self.grids[:,0,:,:], self.batch_size, self.device, difficulty=maze_difficulty)
+        self.grids[:,0,:,:] = self.maze_cache.get_random_mazes(self.batch_size)
 
         # Clear agent channel before placing agents
         self.grids[:, 1].zero_()

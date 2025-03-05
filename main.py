@@ -7,46 +7,40 @@ PLOTTING = False
 if PLOTTING:
     from plotting import setup_plotting, update_plots
     import matplotlib.pyplot as plt
-
+ON_GPU = torch.cuda.is_available()
+device = torch.device("cuda" if ON_GPU else "cpu")
+print(f"Using device: {device}")
+MAX_STEPS = 100
+# BSZ = 1024 if ON_GPU else 32
+BSZ = 32
+UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
 # TODO:
 # choose BUFFER_CAPACITY to max out GPU memory
+BUFFER_CAPACITY = 10**5
 # choose NUM_EPISODES to max out time
+NUM_EPISODES = 10**5 if not PROFILING_ONLY else 50
+SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
+EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
+# might wanna try 10**6
+MAZE_CACHE_SIZE = 10**5 if not PROFILING_ONLY else 1000
 
+# Curriculum learning parameters
+initial_difficulty = 0.5
+final_difficulty = 1.0
+init_dist_to_end = 0.25
+final_dist_to_end = 1.0
+
+checkpoint_dir = "./checkpoints"
+
+## MAIN
 
 def main():
-    ON_GPU = torch.cuda.is_available()
-    device = torch.device("cuda" if ON_GPU else "cpu")
-    print(f"Using device: {device}")
-    MAX_STEPS = 100
-    # BSZ = 1024 if ON_GPU else 32
-    BSZ = 32
-    UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
-    BUFFER_CAPACITY = 100_000
-    NUM_EPISODES = 100_000 if not PROFILING_ONLY else 50
-    SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
-    EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
-
     if PLOTTING:
         plot_elements = setup_plotting()
-
-    # Training parameters
-    checkpoint_dir = "./checkpoints"
-
-    # Curriculum learning parameters
-    initial_difficulty = 0.5
-    final_difficulty = 1.0
-    init_dist_to_end = 0.25
-    final_dist_to_end = 1.0
-
-    # Enable CUDA benchmarking to optimize CUDA operations
     torch.backends.cudnn.benchmark = True
-
-    # Create checkpoints directory
     os.makedirs(checkpoint_dir, exist_ok=True)
-
-    # Initialize batched environment and agent
-    env = GridWorldEnv(device, max_steps=MAX_STEPS, batch_size=BSZ)
-
+    maze_cache = MazeCache(device, BSZ, MAZE_CACHE_SIZE)
+    env = GridWorldEnv(device, MAX_STEPS, BSZ, maze_cache)
     agent = BatchedDQNAgent(
         device,
         lr=2e-4,
