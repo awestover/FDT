@@ -13,9 +13,7 @@ assert GRID_SIZE % 2 == 1, "GRID_SIZE must be an odd number for historical reaso
 DTYPE = torch.float32
 torch.set_default_dtype(DTYPE)
 
-def generate_maze(buffer, batch_size, device, difficulty):
-    assert 0 <= difficulty <= 1, "Difficulty must be between 0 and 1"
-
+def generate_maze(buffer, batch_size, device):
     # For directions
     directions = torch.tensor([
         [-1, 0],  # North
@@ -165,25 +163,6 @@ def generate_maze(buffer, batch_size, device, difficulty):
             completed_mask = backtrack_mask & (top_ptr == 0)
             active[completed_mask] = False
     
-    
-    # Apply difficulty by drilling holes in the walls based on the difficulty parameter
-    # Create a random mask where 1 = keep wall, 0 = drill hole
-    # Higher difficulty = fewer holes (more walls kept)
-    if difficulty < 1.0:
-        # Only consider non-border cells for drilling
-        border_mask = torch.ones_like(mazes, dtype=torch.bool)
-        border_mask[:, 1:-1, 1:-1] = False  # Interior cells
-        
-        # Create random bernoulli mask with probability = difficulty
-        # 1 = keep wall, 0 = drill hole
-        wall_mask = torch.bernoulli(torch.full_like(mazes.float(), difficulty))
-        
-        # Only drill holes in walls (where maze value is 0), and not at borders
-        drill_mask = (mazes == 0) & ~border_mask & (wall_mask == 0)
-        
-        # Apply the mask to drill holes in the maze walls
-        mazes[drill_mask] = 1
-    
     return mazes
 
 class MazeCache:
@@ -226,18 +205,19 @@ class MazeCache:
                 dtype=DTYPE,
                 device=device
             )
-            generate_maze(maze_batch, current_batch_size, device, difficulty=1.0)
+            generate_maze(maze_batch, current_batch_size, device)
             
             # Store in cache
             self.mazes[start_idx:end_idx] = maze_batch
             
         print(f"Finished generating {num_mazes} mazes")
 
-    def get_random_mazes(self, batch_size):
+    def get_random_mazes(self, batch_size, difficulty=0.5):
         """Return a batch of random mazes from the cache"""
         indices = torch.randint(0, self.num_mazes, (batch_size,), device=self.device)
-        return self.mazes[indices]
-
+        full_mazes = self.mazes[indices]
+        non_holes = torch.bernoulli(torch.full_like(full_mazes.float(), difficulty))
+        return full_mazes * non_holes
 
 class GridWorldEnv:
     def __init__(self, device, max_steps, batch_size, maze_cache):
@@ -299,7 +279,7 @@ class GridWorldEnv:
         Returns:
             Tensor of shape [batch_size, channels, grid_size, grid_size]
         """
-        self.grids[:,0,:,:] = self.maze_cache.get_random_mazes(self.batch_size)
+        self.grids[:,0,:,:] = self.maze_cache.get_random_mazes(self.batch_size, maze_difficulty)
 
         # Clear agent channel before placing agents
         self.grids[:, 1].zero_()
@@ -539,6 +519,7 @@ class BatchedDQNAgent:
         # Update target network periodically
         self.steps_done += 1
         if self.steps_done % self.update_target_every == 0:
+            print("updating target")
             self.target_net.load_state_dict(self.policy_net.state_dict())
 
         return loss.item()

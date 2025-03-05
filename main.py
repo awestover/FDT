@@ -24,7 +24,7 @@ MAZE_CACHE_SIZE = 10**6
 if PROFILING_ONLY:
     MAZE_CACHE_SIZE = 1000
 if not ON_GPU:
-    MAZE_CACHE_SIZE = 2*10**4
+    MAZE_CACHE_SIZE = 200
 PRINT_PROGRESS_EVERY = 1
 
 # Curriculum learning parameters
