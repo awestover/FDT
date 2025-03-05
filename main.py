@@ -11,7 +11,7 @@ ON_GPU = torch.cuda.is_available()
 device = torch.device("cuda" if ON_GPU else "cpu")
 print(f"Using device: {device}")
 MAX_STEPS = 100
-BSZ = 1<<12 if ON_GPU else 32
+BSZ = 1<<12 if ON_GPU else 1
 UPDATE_TARGET_EVERY = MAX_STEPS * BSZ // 10
 # TODO:
 # choose BUFFER_CAPACITY to max out GPU memory
@@ -20,7 +20,11 @@ BUFFER_CAPACITY = 10**6
 NUM_EPISODES = 10**3 if not PROFILING_ONLY else 50
 SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
 EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
-MAZE_CACHE_SIZE = 10**6 if not PROFILING_ONLY else 1000
+MAZE_CACHE_SIZE = 10**6 
+if PROFILING_ONLY:
+    MAZE_CACHE_SIZE = 1000
+if not ON_GPU:
+    MAZE_CACHE_SIZE = 2*10**4
 PRINT_PROGRESS_EVERY = 1
 
 # Curriculum learning parameters

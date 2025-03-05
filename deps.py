@@ -214,6 +214,8 @@ class MazeCache:
         
         # Generate mazes in batches to avoid memory issues
         for i in range(self.batch_count):
+            if i % 100 == 0:
+                print(f"Generating batch {i+1}/{self.batch_count}")
             start_idx = i * batch_size
             end_idx = min((i + 1) * batch_size, num_mazes)
             current_batch_size = end_idx - start_idx
