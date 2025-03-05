@@ -402,7 +402,8 @@ class GridWorldEnv:
         goal_reached_mask = active_mask & at_goal_mask
         
         # Update rewards and mark as done for environments reaching goals
-        rewards[goal_reached_mask] = 1.0
+        rewards[active_mask] = -1.0
+        rewards[goal_reached_mask] = 10.0
         dones[goal_reached_mask] = True
         
         # Update steps count for active environments

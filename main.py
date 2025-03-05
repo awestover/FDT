@@ -20,8 +20,7 @@ BUFFER_CAPACITY = 10**6
 NUM_EPISODES = 10**3 if not PROFILING_ONLY else 50
 SAVE_EVERY = NUM_EPISODES // 10 if not PROFILING_ONLY else 5000
 EVAL_EVERY = NUM_EPISODES // 100 if not PROFILING_ONLY else 5000
-# might wanna try 10**6
-MAZE_CACHE_SIZE = 10**5 if not PROFILING_ONLY else 1000
+MAZE_CACHE_SIZE = 10**6 if not PROFILING_ONLY else 1000
 
 # Curriculum learning parameters
 initial_difficulty = 0.7

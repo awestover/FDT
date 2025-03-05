@@ -6,7 +6,8 @@ from deps import *
 
 #  CHECKPOINT = "gpubro"
 #  CHECKPOINT = "ultimate12"
-CHECKPOINT = "fancy"
+#  CHECKPOINT = "fancy"
+CHECKPOINT = "op"
 
 #  def create_movie(env, agent, ax, movie_filename='agent_journey.mp4'):
 #      frames = []
@@ -72,8 +73,9 @@ def tensor_to_numpy_grid(tensor):
 
 def play_agent(env, agent, ax):
     state = env.reset(maze_difficulty=0.7, dist_to_end=0.7)
+    __import__('ipdb').set_trace()
     for i in range(90):
-        action = agent.select_action(state)
+        action = agent.select_actions(state)
         next_state, reward, done = env.step(action)
         state = next_state
         ax.clear()
@@ -86,9 +88,11 @@ def play_agent(env, agent, ax):
             plt.pause(.03)
 
 if __name__ == '__main__':
+    BSZ = 1
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    env = GridWorldEnv(device, max_steps=100)
-    agent = DQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=64, update_target_every=200)
+    maze_cache = MazeCache(device, BSZ, 100)
+    env = GridWorldEnv(device, 100, BSZ, maze_cache)
+    agent = BatchedDQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=64, update_target_every=200)
     checkpoint_path = f"checkpoints/{CHECKPOINT}.pth"
     checkpoint = torch.load(checkpoint_path, weights_only=True, map_location=torch.device('cpu')) # weights_only=False if it's broken
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
