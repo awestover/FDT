@@ -160,9 +160,7 @@ i wish i were using priority replay buffer.
 but the plan for now is --- cache mazes, 
 then just let it run and hope it learns
 
-
 ----
-
 
 BSZ 1024
 MAX_EP_LENGTH 100
@@ -170,4 +168,12 @@ NUM_EPISODES 10^5
 
 10^(3 + 2 + 5) = 10^10
 
+---
+
+oh dear there is a serious bug
+plan: 
+- fix this bug
+- let it run while i get lunch
+- move on from this project: it has zero AIS value and I've
+    already gained the educational benefits
 

@@ -348,7 +348,9 @@ class GridWorldEnv:
             return self.grids.clone(), rewards, dones
         
         # Clear agent positions in active environments
-        self.grids[active_mask, 1].zero_()
+        # note that self.grids[active_mask, 1].zero_() doesn't work!!! 
+        # because mask creates a copy?
+        self.grids[active_mask, 1] = 0
         
         # Create a lookup tensor for the move_map - precompute this once in __init__ for efficiency
         move_lookup = torch.tensor([

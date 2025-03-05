@@ -76,7 +76,6 @@ def play_agent(env, agent, ax):
         action = agent.select_actions(state)
         next_state, reward, done = env.step(action)
         state = next_state
-        __import__('ipdb').set_trace()
         ax.clear()
         ax.imshow(tensor_to_numpy_grid(state))
         ax.set_title(f"Step {i}")
