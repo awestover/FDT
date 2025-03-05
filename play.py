@@ -7,7 +7,7 @@ from deps import *
 #  CHECKPOINT = "gpubro"
 #  CHECKPOINT = "ultimate12"
 #  CHECKPOINT = "fancy"
-CHECKPOINT = "op"
+CHECKPOINT = "lul"
 
 #  def create_movie(env, agent, ax, movie_filename='agent_journey.mp4'):
 #      frames = []
@@ -71,7 +71,7 @@ def tensor_to_numpy_grid(tensor):
 
 
 def play_agent(env, agent, ax):
-    state = env.reset(maze_difficulty=0.7, dist_to_end=0.25)
+    state = env.reset(maze_difficulty=0.9, dist_to_end=0.9)
     for i in range(90):
         action = agent.select_actions(state)
         next_state, reward, done = env.step(action)

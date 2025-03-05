@@ -28,7 +28,7 @@ if not ON_GPU:
 PRINT_PROGRESS_EVERY = 1
 
 # Curriculum learning parameters
-initial_difficulty = 0.95
+initial_difficulty = 0.5
 final_difficulty = 1.0
 init_dist_to_end = 0.25
 final_dist_to_end = 1.0
@@ -44,7 +44,7 @@ maze_cache = MazeCache(device, BSZ, MAZE_CACHE_SIZE)
 env = GridWorldEnv(device, MAX_STEPS, BSZ, maze_cache)
 agent = BatchedDQNAgent(
     device,
-    lr=2e-4,
+    lr=1e-5,
     gamma=0.99,
     buffer_capacity=BUFFER_CAPACITY,
     batch_size=BSZ,
