@@ -184,3 +184,10 @@ choose different difficulty levels
 maybe not a huge deal since the mazes are super easy tho
 
 
+---
+
+ideas for making stuff better:
+
+- priority replay buffer
+- fix the maze difficulty bug so i can have a more interesting ciriculum
+

@@ -6,7 +6,7 @@ from numpy import random as nprand
 from random import random as rand
 from math import exp
 
-GRID_SIZE = 15
+GRID_SIZE = 9 #15
 GS = GRID_SIZE
 HALF_GS = GRID_SIZE // 2
 assert GRID_SIZE % 2 == 1, "GRID_SIZE must be an odd number for historical reasons"
