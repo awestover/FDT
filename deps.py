@@ -231,7 +231,7 @@ class GridWorldEnv:
             max_steps: Maximum steps per episode
             batch_size: Number of parallel environments
         """
-        self.num_channels = 2  # wall, agent
+        self.num_channels = 3  # wall, agent, goal
         self.max_steps = max_steps
         self.grid_size = GRID_SIZE
         self.device = device
@@ -250,6 +250,8 @@ class GridWorldEnv:
             dtype=DTYPE,
             device=self.device,
         )
+        self.grids[:, 2, GS-1, GS-1] = 1  # Goal location
+
         self.visit_counts = torch.zeros(
             (batch_size, GRID_SIZE, GRID_SIZE), dtype=torch.long, device=self.device
         )
@@ -430,7 +432,7 @@ class BatchedDQNAgent:
         self.env_batch_size = batch_size
 
         # Input channels and actions
-        self.input_channels = 2  # wall, agent
+        self.input_channels = 3  # wall, agent, goal
         self.num_actions = 4  # up, down, left, right
 
         # Initialize networks
