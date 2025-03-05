@@ -6,247 +6,185 @@ from numpy import random as nprand
 from random import random as rand
 from math import exp
 
-GRID_SIZE = 16
+GRID_SIZE = 15
+GS = GRID_SIZE
+HALF_GS = GRID_SIZE // 2
+assert GRID_SIZE % 2 == 1, "GRID_SIZE must be an odd number for historical reasons"
 DTYPE = torch.float32
 torch.set_default_dtype(DTYPE)
 
-def fancy_generate_maze_vectorized(buffer=None, device=None, nchannels=2, size=16, difficulty=0.5, batch_size=1):
-    """
-    Fully vectorized maze generator that ensures a path from start to end.
+def generate_maze(buffer, batch_size, device, difficulty):
+    assert 0 <= difficulty <= 1, "Difficulty must be between 0 and 1"
+
+    # For directions
+    directions = torch.tensor([
+        [-1, 0],  # North
+        [0, 1],   # East
+        [1, 0],   # South
+        [0, -1]   # West
+    ], device=device)
+
+    # Initialize mazes with all walls
+    mazes = buffer
+    mazes.fill_(0)
     
-    Args:
-        buffer: Optional pre-allocated tensor to write into, shape [batch_size, nchannels, size, size]
-        device: The torch device to place the tensor on
-        nchannels (int): Number of channels for one-hot encoding
-        size (int): Size of the maze (size x size grid)
-        difficulty (float or tensor): Value between 0.0 and 1.0 controlling maze complexity
-                                     Can be a single float or a tensor of shape [batch_size]
-        batch_size (int): Number of mazes to generate in parallel
+    # Initialize visit state tensor
+    # 0 = unvisited, 1 = in stack, 2 = visited and backtracked
+    visit_state = torch.zeros((batch_size, GRID_SIZE, GRID_SIZE), dtype=torch.uint8, device=device)
+    y_coords = torch.arange(HALF_GS, device=device) * 2 + 1
+    x_coords = torch.arange(HALF_GS, device=device) * 2 + 1
     
-    Returns:
-        torch.Tensor: Batch of one-hot encoded mazes with shape [batch_size, nchannels, size, size]
-    """
-    import torch
+    # Select random starting cells for each maze in batch
+    idx_y = torch.randint(0, len(y_coords), (batch_size,), device=device)
+    idx_x = torch.randint(0, len(x_coords), (batch_size,), device=device)
+    start_y = y_coords[idx_y]
+    start_x = x_coords[idx_x]
     
-    # Handle device
-    if device is None:
-        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    # Create batch indices for fancy indexing
+    batch_indices = torch.arange(batch_size, device=device)
     
-    # Convert difficulty to tensor if it's a scalar
-    if not isinstance(difficulty, torch.Tensor):
-        difficulty = torch.full((batch_size,), difficulty, device=device)
+    # Mark starting points as paths and in-stack using fancy indexing
+    mazes[batch_indices, start_y, start_x] = 1
+    visit_state[batch_indices, start_y, start_x] = 1
     
-    # Initialize the output tensor
-    if buffer is None:
-        one_hot = torch.ones((batch_size, nchannels, size, size), device=device)
-    else:
-        one_hot = buffer
-        one_hot.fill_(1.0)
+    # Create GPU stack representation - use a 3D tensor to represent stack state
+    # We'll use the visit_state to track which cells are in the stack
+    # and top_ptr to track the top of each stack
+    max_stack_size = HALF_GS**2  # Maximum possible stack size
+    stack = torch.zeros((batch_size, max_stack_size, 2), dtype=torch.int32, device=device)
+    top_ptr = torch.ones(batch_size, dtype=torch.int32, device=device)  # All stacks start with 1 element
     
-    # Start with walls everywhere (channel 0 = walls)
-    one_hot[:, 0, :, :] = 1.0
+    # Initialize stacks with starting positions using fancy indexing
+    # Convert to int32 to match stack tensor type
+    stack[batch_indices, 0, 0] = start_y.to(torch.int32)
+    stack[batch_indices, 0, 1] = start_x.to(torch.int32)
     
-    # Create grid pattern - make all even coordinates paths
-    even_indices = torch.arange(0, size, 2, device=device)
-    i_coords, j_coords = torch.meshgrid(even_indices, even_indices, indexing="ij")
+    # Track active mazes
+    active = torch.ones(batch_size, dtype=torch.bool, device=device)
     
-    # Set all even cells to be paths (0 = path, 1 = wall in channel 0)
-    one_hot[:, 0, i_coords, j_coords] = 0.0
-    
-    # Number of waypoints based on difficulty (vectorized)
-    num_waypoints = 3 + (difficulty * 3).int()
-    max_waypoints = num_waypoints.max().item()
-    
-    # Generate waypoint coordinates for all mazes in batch
-    # Shape: [batch_size, max_waypoints+2, 2]
-    # +2 for start and end points
-    waypoints = torch.zeros((batch_size, max_waypoints+2, 2), device=device)
-    
-    # All mazes start at top-left (0,0)
-    waypoints[:, 0, :] = 0
-    
-    # All mazes end at bottom-right (size-1, size-1)
-    waypoints[:, -1, 0] = size - 1
-    waypoints[:, -1, 1] = size - 1
-    
-    # Generate intermediate waypoints
-    for i in range(max_waypoints):
-        # Create a mask for valid batch items (those that need this waypoint)
-        mask = (i < num_waypoints).float().unsqueeze(-1)
+    # Main generation loop
+    while active.any():
+        # Get current position for all active mazes using fancy indexing
+        # Create indices for the top of each stack
+        stack_top_indices = top_ptr - 1
+        stack_top_indices = torch.where(stack_top_indices >= 0, stack_top_indices, torch.zeros_like(stack_top_indices))
         
-        # Calculate progress along path
-        progress = torch.tensor([(i + 1) / (n.item() + 1) for n in num_waypoints], device=device).unsqueeze(-1)
+        # Extract current positions for all mazes
+        current_pos = torch.zeros((batch_size, 2), dtype=torch.int32, device=device)
+        mask = active & (top_ptr > 0)
+        if mask.any():
+            current_pos[mask, 0] = stack[mask, stack_top_indices[mask], 0]  # y
+            current_pos[mask, 1] = stack[mask, stack_top_indices[mask], 1]  # x
         
-        # Mix randomness with progression based on difficulty
-        random_factor = difficulty.unsqueeze(-1) * 0.4
-        progress_factor = 1.0 - random_factor
+        # Generate random direction order for each maze
+        dir_indices = torch.arange(4, device=device).expand(batch_size, 4)
+        shuffle_values = torch.rand(batch_size, 4, device=device)
+        _, dir_order = shuffle_values.sort(dim=1)
         
-        # Random positions scaled by maze size
-        rand_pos = torch.rand((batch_size, 2), device=device)
+        # Check all 4 directions in parallel
+        has_unvisited = torch.zeros(batch_size, dtype=torch.bool, device=device)
+        next_y = torch.zeros(batch_size, dtype=torch.int32, device=device)
+        next_x = torch.zeros(batch_size, dtype=torch.int32, device=device)
+        wall_y = torch.zeros(batch_size, dtype=torch.int32, device=device)
+        wall_x = torch.zeros(batch_size, dtype=torch.int32, device=device)
         
-        # Calculate waypoint positions
-        wp_pos = (rand_pos * random_factor + progress * progress_factor) * (size - 1)
-        
-        # Round to even coordinates for valid paths
-        wp_pos = (wp_pos // 2) * 2
-        
-        # Apply mask and store waypoints
-        waypoints[:, i+1, :] = wp_pos * mask
-    
-    # Create paths between waypoints for all mazes in batch
-    for i in range(max_waypoints + 1):
-        # Only process waypoints that exist for each batch item
-        if i == 0:  # First segment (start to first waypoint)
-            current_mask = torch.ones(batch_size, device=device)
-        else:
-            current_mask = (i < num_waypoints+1).float()
-        
-        # Get current and next waypoints
-        curr_points = waypoints[:, i, :]
-        next_points = waypoints[:, i+1, :]
-        
-        # Connect horizontally first, then vertically
-        # For each batch, we need to create paths between waypoints
-        
-        # This part is trickier to fully vectorize due to variable path lengths
-        # Let's implement it efficiently by broadcasting
-        
-        # Horizontal paths
-        x_starts = curr_points[:, 1].int()
-        x_ends = next_points[:, 1].int()
-        y_starts = curr_points[:, 0].int()
-        
-        # Determine direction (left to right or right to left)
-        x_steps = (x_ends >= x_starts).float() * 2 - 1  # 1 if going right, -1 if going left
-        
-        # Maximum path length needed
-        max_x_dist = (x_ends - x_starts).abs().max().int().item()
-        
-        # Create horizontal paths
-        for step in range(max_x_dist + 1):
-            # Calculate x position at each step for each batch
-            x_offset = torch.clamp(step * x_steps, torch.zeros_like(x_steps), (x_ends - x_starts).abs())
-            x_pos = (x_starts + x_offset * ((x_ends >= x_starts).float() * 2 - 1)).long()
+        # Process each direction in tensor operations
+        for dir_idx in range(4):
+            # Get direction based on random ordering
+            d = dir_order[:, dir_idx] % 4
             
-            # Apply mask for valid positions
-            valid_steps = (step <= (x_ends - x_starts).abs()) & current_mask.bool()
+            # Calculate neighbor positions (2 cells away)
+            dy = directions[d, 0]
+            dx = directions[d, 1]
             
-            # Carve path at these positions
-            for b in range(batch_size):
-                if valid_steps[b]:
-                    one_hot[b, 0, y_starts[b], x_pos[b]] = 0
+            # Calculate neighbor and wall positions for all mazes simultaneously
+            ny = current_pos[:, 0] + 2 * dy
+            nx = current_pos[:, 1] + 2 * dx
+            wy = current_pos[:, 0] + dy
+            wx = current_pos[:, 1] + dx
+            
+            # Check boundary conditions
+            valid = (ny >= 0) & (ny < GRID_SIZE) & (nx >= 0) & (nx < GRID_SIZE)
+            
+            # Check if neighbor is unvisited 
+            # Only update mazes that are active, have a non-empty stack, and haven't found an unvisited neighbor yet
+            mask = active & (top_ptr > 0) & ~has_unvisited & valid
+
+            valid_ny = torch.clamp(ny, 0, GRID_SIZE-1)
+            valid_nx = torch.clamp(nx, 0, GRID_SIZE-1)
+            
+            # Get visit state for valid neighbors using fancy indexing
+            if mask.any():
+                # Create a submask for mazes with unvisited neighbors in this direction
+                unvisited_mask = mask & (visit_state[batch_indices, valid_ny, valid_nx] == 0)
+                
+                if unvisited_mask.any():
+                    # Update for mazes that have unvisited neighbors and haven't found one yet
+                    update_mask = unvisited_mask & ~has_unvisited
+                    if update_mask.any():
+                        has_unvisited[update_mask] = True
+                        next_y[update_mask] = ny[update_mask].to(torch.int32)
+                        next_x[update_mask] = nx[update_mask].to(torch.int32)
+                        wall_y[update_mask] = wy[update_mask].to(torch.int32)
+                        wall_x[update_mask] = wx[update_mask].to(torch.int32)
         
-        # Vertical paths (from where horizontal paths ended to the next waypoint)
-        y_ends = next_points[:, 0].int()
+        # Process all mazes in parallel using fancy indexing
+        # Create masks for different operations
+        active_mask = active & (top_ptr > 0)
+        carve_mask = active_mask & has_unvisited
+        backtrack_mask = active_mask & ~has_unvisited
         
-        # Determine direction (top to bottom or bottom to top)
-        y_steps = (y_ends >= y_starts).float() * 2 - 1  # 1 if going down, -1 if going up
+        # For mazes with unvisited neighbors: carve paths
+        if carve_mask.any():
+            # Carve paths to neighbors
+            mazes[carve_mask, wall_y[carve_mask], wall_x[carve_mask]] = 1
+            mazes[carve_mask, next_y[carve_mask], next_x[carve_mask]] = 1
+            
+            # Mark as in-stack
+            visit_state[carve_mask, next_y[carve_mask], next_x[carve_mask]] = 1
+            
+            # Push to stack
+            stack[carve_mask, top_ptr[carve_mask], 0] = next_y[carve_mask]
+            stack[carve_mask, top_ptr[carve_mask], 1] = next_x[carve_mask]
+            top_ptr[carve_mask] += 1
         
-        # Maximum path length needed
-        max_y_dist = (y_ends - y_starts).abs().max().int().item()
+        # For mazes with no unvisited neighbors: backtrack
+        if backtrack_mask.any():
+            # Get current cells at top of stack
+            backtrack_indices = top_ptr[backtrack_mask] - 1
+            cy = stack[backtrack_mask, backtrack_indices, 0]
+            cx = stack[backtrack_mask, backtrack_indices, 1]
+            
+            # Mark current cells as backtracked
+            visit_state[backtrack_mask, cy, cx] = 2
+            
+            # Pop from stack
+            top_ptr[backtrack_mask] -= 1
+            
+            # Check for completed mazes
+            completed_mask = backtrack_mask & (top_ptr == 0)
+            active[completed_mask] = False
+    
+    
+    # Apply difficulty by drilling holes in the walls based on the difficulty parameter
+    # Create a random mask where 1 = keep wall, 0 = drill hole
+    # Higher difficulty = fewer holes (more walls kept)
+    if difficulty < 1.0:
+        # Only consider non-border cells for drilling
+        border_mask = torch.ones_like(mazes, dtype=torch.bool)
+        border_mask[:, 1:-1, 1:-1] = False  # Interior cells
         
-        # Create vertical paths
-        for step in range(max_y_dist + 1):
-            # Calculate y position at each step for each batch
-            y_offset = torch.clamp(step * y_steps, torch.zeros_like(y_steps), (y_ends - y_starts).abs())
-            y_pos = (y_starts + y_offset * ((y_ends >= y_starts).float() * 2 - 1)).long()
-            
-            # Apply mask for valid positions
-            valid_steps = (step <= (y_ends - y_starts).abs()) & current_mask.bool()
-            
-            # Carve path at these positions
-            for b in range(batch_size):
-                if valid_steps[b]:
-                    one_hot[b, 0, y_pos[b], x_ends[b]] = 0
+        # Create random bernoulli mask with probability = difficulty
+        # 1 = keep wall, 0 = drill hole
+        wall_mask = torch.bernoulli(torch.full_like(mazes.float(), difficulty))
+        
+        # Only drill holes in walls (where maze value is 0), and not at borders
+        drill_mask = (mazes == 0) & ~border_mask & (wall_mask == 0)
+        
+        # Apply the mask to drill holes in the maze walls
+        mazes[drill_mask] = 1
     
-    # Add random connections based on difficulty
-    # Calculate connection probability (inversely related to difficulty)
-    connect_chance = 0.7 - difficulty * 0.5
-    
-    # Generate random connection masks
-    rand_connect = torch.rand((batch_size, size//2, size//2, 4), device=device)
-    connect_mask = rand_connect < connect_chance.view(batch_size, 1, 1, 1)
-    
-    # Process each cell in a vectorized way as much as possible
-    for i in range(0, size-2, 2):
-        for j in range(0, size-2, 2):
-            # Apply north connections
-            if i > 0:
-                north_mask = connect_mask[:, i//2, j//2, 0]
-                one_hot[north_mask, 0, i-1, j] = 0
-            
-            # Apply east connections
-            east_mask = connect_mask[:, i//2, j//2, 1]
-            one_hot[east_mask, 0, i, j+1] = 0
-            
-            # Apply south connections
-            south_mask = connect_mask[:, i//2, j//2, 2]
-            one_hot[south_mask, 0, i+1, j] = 0
-            
-            # Apply west connections
-            if j > 0:
-                west_mask = connect_mask[:, i//2, j//2, 3]
-                one_hot[west_mask, 0, i, j-1] = 0
-    
-    # Ensure entrance and exit are clear for all mazes
-    one_hot[:, 0, 0, 0] = 0  # Entrance
-    one_hot[:, 0, size-1, size-1] = 0  # Exit
-    
-    # Ensure paths leading to entrance/exit are clear
-    if size > 1:
-        one_hot[:, 0, 0, 1] = 0  # Path to the right of entrance
-        one_hot[:, 0, 1, 0] = 0  # Path below entrance
-        one_hot[:, 0, size-2, size-1] = 0  # Path to exit
-        one_hot[:, 0, size-1, size-2] = 0  # Path to exit
-    
-    # Set channel 1 to be the opposite of channel 0 (if using multi-channel encoding)
-    if nchannels > 1:
-        one_hot[:, 1, :, :] = 1.0 - one_hot[:, 0, :, :]
-    
-    return one_hot
-
-def f_vectorized(d, bsz, device):
-    """
-    Vectorized version of the f function to compute starting positions
-
-    Args:
-        d: Float or tensor of shape [batch_size] representing distance parameter
-        bsz: Batch size
-        device: Torch device
-
-    Returns:
-        Tensor of positions with shape [batch_size]
-    """
-    # Convert d to tensor if it's a scalar
-    if not isinstance(d, torch.Tensor):
-        d = torch.full((bsz,), d, dtype=DTYPE, device=device)
-
-    # Create result tensor
-    result = torch.zeros(bsz, dtype=torch.long, device=device)
-
-    # Process each element
-    # Apply mask for d >= 1 (return 0)
-    mask_geq_1 = d >= 1
-    result[mask_geq_1] = 0
-
-    # For d < 1, apply the transformation
-    mask_lt_1 = ~mask_geq_1
-    if mask_lt_1.sum() > 0:
-        center = (1 - d[mask_lt_1]) * GRID_SIZE
-        std_dev = torch.max(
-            torch.tensor(0.5, device=device), (1 - d[mask_lt_1]) * GRID_SIZE * 0.2
-        )
-
-        # Generate normal distribution values
-        normal_values = torch.normal(center, std_dev)
-
-        # Clamp values to be within grid bounds
-        clamped_values = torch.clamp(normal_values, 1, GRID_SIZE - 1)
-
-        # Round to integers
-        result[mask_lt_1] = clamped_values.round().to(torch.long)
-
-    return result
+    return mazes
 
 
 class GridWorldEnv:
@@ -307,26 +245,14 @@ class GridWorldEnv:
         Returns:
             Tensor of shape [batch_size, channels, grid_size, grid_size]
         """
-        # Generate mazes for all environments in one batch operation
-        fancy_generate_maze_vectorized(
-            self.grids,
-            device=self.device,
-            nchannels=self.num_channels,
-            size=GRID_SIZE,
-            difficulty=maze_difficulty,
-            batch_size=self.batch_size,
-        )
+        generate_maze(self.grids[:,0,:,:], self.batch_size, self.device, difficulty=maze_difficulty)
 
         # Clear agent channel before placing agents
         self.grids[:, 1].zero_()
 
         # Compute starting positions for all agents in batch
-        self.agent_positions[:, 0] = f_vectorized(
-            dist_to_end, self.batch_size, self.device
-        )
-        self.agent_positions[:, 1] = f_vectorized(
-            dist_to_end, self.batch_size, self.device
-        )
+        smallest_pos = int((GRID_SIZE-1)*(1-dist_to_end))
+        self.agent_positions = torch.randint(low=smallest_pos, high=GRID_SIZE, size=(self.batch_size,2), device=self.device)
 
         # Place agents using advanced indexing
         batch_indices = torch.arange(self.batch_size, device=self.device)
@@ -342,90 +268,6 @@ class GridWorldEnv:
         self.active_envs.fill_(True)
 
         return self.grids.clone()
-
-    # This method handles resetting a subset of environments
-    # Used when we need to reset just the environments that are done
-    # def reset_subset(self, indices, maze_difficulty=0.5, dist_to_end=0.0):
-    #     """
-    #     Reset only specific environments indexed by indices
-
-    #     Args:
-    #         indices: Boolean mask or integer indices of environments to reset
-    #         maze_difficulty: Float or tensor of maze difficulties (0.0-1.0)
-    #         dist_to_end: Float or tensor of distances to end (0.0-1.0)
-
-    #     Returns:
-    #         Tensor of shape [num_reset, channels, grid_size, grid_size]
-    #     """
-    #     # Convert indices to boolean mask if it's a tensor of indices
-    #     if not isinstance(indices, torch.Tensor) or indices.dtype != torch.bool:
-    #         mask = torch.zeros(self.batch_size, dtype=torch.bool, device=self.device)
-    #         mask[indices] = True
-    #     else:
-    #         mask = indices
-
-    #     num_to_reset = mask.sum().item()
-
-    #     # Handle scalar difficulty and distance
-    #     if not isinstance(maze_difficulty, torch.Tensor):
-    #         maze_difficulty = torch.full(
-    #             (num_to_reset,), maze_difficulty, dtype=DTYPE, device=self.device
-    #         )
-    #     elif (
-    #         len(maze_difficulty.shape) > 0
-    #         and maze_difficulty.shape[0] == self.batch_size
-    #     ):
-    #         maze_difficulty = maze_difficulty[mask]
-
-    #     if not isinstance(dist_to_end, torch.Tensor):
-    #         dist_to_end = torch.full(
-    #             (num_to_reset,), dist_to_end, dtype=DTYPE, device=self.device
-    #         )
-    #     elif len(dist_to_end.shape) > 0 and dist_to_end.shape[0] == self.batch_size:
-    #         dist_to_end = dist_to_end[mask]
-
-    #     # Generate new mazes just for the specified environments
-    #     new_grids = torch.zeros(
-    #         (num_to_reset, self.num_channels, GRID_SIZE, GRID_SIZE),
-    #         dtype=DTYPE,
-    #         device=self.device,
-    #     )
-
-    #     fancy_generate_maze_vectorized(
-    #         new_grids,
-    #         device=self.device,
-    #         nchannels=self.num_channels,
-    #         size=GRID_SIZE,
-    #         difficulty=maze_difficulty,
-    #         batch_size=num_to_reset,
-    #     )
-
-    #     # Clear agent channel before placing agents
-    #     new_grids[:, 1].zero_()
-
-    #     # Compute starting positions for the reset agents
-    #     new_positions = torch.zeros(
-    #         (num_to_reset, 2), dtype=torch.long, device=self.device
-    #     )
-    #     new_positions[:, 0] = f_vectorized(dist_to_end, num_to_reset, self.device)
-    #     new_positions[:, 1] = f_vectorized(dist_to_end, num_to_reset, self.device)
-
-    #     # Place agents in the new grids
-    #     batch_indices = torch.arange(num_to_reset, device=self.device)
-    #     new_grids[batch_indices, 1, new_positions[:, 0], new_positions[:, 1]] = 1
-
-    #     # Update the main grids and agent positions
-    #     self.grids[mask] = new_grids
-    #     self.agent_positions[mask] = new_positions
-
-    #     # Reset step counters and visit counts for reset environments
-    #     self.steps_count[mask] = 0
-    #     self.visit_counts[mask].zero_()
-
-    #     # Mark reset environments as active
-    #     self.active_envs[mask] = True
-
-    #     return new_grids
 
     def step(self, actions, active_mask=None):
         """
@@ -808,4 +650,18 @@ class TensorReplayBuffer:
             self.next_states[batch_indices],
             self.dones[batch_indices].squeeze(1),  # Remove extra dimension
         )
+
+
+if __name__ == "__main__":
+    bsz = 4
+    grids = torch.zeros((bsz, 2, GS, GS), dtype=DTYPE)
+    generate_maze(
+        grids[:,0,:,:],
+        bsz,
+        "cpu",
+        difficulty=1
+    )
+    import matplotlib.pyplot as plt
+    plt.imshow(grids[0, 0,:,:].numpy(), cmap="binary")
+    plt.show()
 

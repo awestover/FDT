@@ -33,7 +33,7 @@ def main():
     checkpoint_dir = "./checkpoints"
 
     # Curriculum learning parameters
-    initial_difficulty = 0.25
+    initial_difficulty = 0.5
     final_difficulty = 1.0
     init_dist_to_end = 0.25
     final_dist_to_end = 1.0
@@ -63,9 +63,7 @@ def main():
 
     # Warmup phase with vectorized operations
     print("Warming up replay buffer...")
-    difficulties = torch.ones(BSZ, device=device) * initial_difficulty
-    distances = torch.ones(BSZ, device=device) * init_dist_to_end
-    states = env.reset(difficulties, distances)
+    states = env.reset(initial_difficulty, init_dist_to_end)
     active_envs = torch.ones(BSZ, dtype=torch.bool, device=device)
 
     # Fill buffer with a couple random actions
@@ -98,12 +96,8 @@ def main():
             final_dist_to_end - init_dist_to_end
         )
 
-        # Set up difficulty and distance tensors for all environments
-        difficulties = torch.ones(BSZ, device=device) * cur_difficulty
-        distances = torch.ones(BSZ, device=device) * cur_dist_to_end
-
         # Reset all environments with current parameters
-        states = env.reset(difficulties, distances)
+        states = env.reset(cur_difficulty, cur_dist_to_end)
         env_episode_steps.zero_()
         env_episode_rewards.zero_()
 
@@ -217,9 +211,7 @@ def main():
 
             for _ in range(num_eval_batches):
                 # Reset all environments with current difficulty
-                eval_difficulties = torch.ones(BSZ, device=device) * cur_difficulty
-                eval_distances = torch.ones(BSZ, device=device) * cur_dist_to_end
-                eval_states = env.reset(eval_difficulties, eval_distances)
+                eval_states = env.reset(cur_difficulty, cur_dist_to_end)
 
                 eval_episode_rewards = torch.zeros(BSZ, device=device)
                 eval_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
