@@ -191,3 +191,15 @@ ideas for making stuff better:
 - priority replay buffer
 - fix the maze difficulty bug so i can have a more interesting ciriculum
 
+----
+
+note: if loss is increasing this is really really bad.
+this is called exploding gradients. 
+and it probably means 
+- lr too high?
+- grad clipping not good enough
+- idk
+keep an eye on this metric.
+
+if your loss is getting better and you are frequently updating
+target net, then you will win

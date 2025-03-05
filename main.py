@@ -12,7 +12,7 @@ device = torch.device("cuda" if ON_GPU else "cpu")
 print(f"Using device: {device}")
 MAX_STEPS = 50
 BSZ = 1<<12 if ON_GPU else 1
-UPDATE_TARGET_EVERY = 256
+UPDATE_TARGET_EVERY = 128
 # TODO:
 # choose BUFFER_CAPACITY to max out GPU memory
 BUFFER_CAPACITY = 10**6
