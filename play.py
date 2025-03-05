@@ -56,28 +56,27 @@ def tensor_to_numpy_grid(tensor):
         tensor = tensor.cpu()
     
     tensor_np = tensor.detach().numpy()
-    _, size1, size2 = tensor_np.shape
+    _, _, size1, size2 = tensor_np.shape
     
     # Initialize result array with zeros
     result = np.zeros((size1, size2), dtype=np.int8)
     
     # Set cells to 1 where first channel has 1
-    result[tensor_np[0] > 0.5] = 1
+    result[tensor_np[0,0] > 0.5] = 1
     
     # Set cells to 2 where second channel has 1
     # This will override any 1 values if both channels have 1s
-    result[tensor_np[1] > 0.5] = 2
-    
+    result[tensor_np[0,1] > 0.5] = 2
     return result
 
 
 def play_agent(env, agent, ax):
     state = env.reset(maze_difficulty=0.7, dist_to_end=0.7)
-    __import__('ipdb').set_trace()
     for i in range(90):
         action = agent.select_actions(state)
         next_state, reward, done = env.step(action)
         state = next_state
+        __import__('ipdb').set_trace()
         ax.clear()
         ax.imshow(tensor_to_numpy_grid(state))
         ax.set_title(f"Step {i}")
@@ -92,7 +91,7 @@ if __name__ == '__main__':
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     maze_cache = MazeCache(device, BSZ, 100)
     env = GridWorldEnv(device, 100, BSZ, maze_cache)
-    agent = BatchedDQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=64, update_target_every=200)
+    agent = BatchedDQNAgent(device, lr=1e-4, gamma=0.99, buffer_capacity=50000, batch_size=BSZ, update_target_every=200)
     checkpoint_path = f"checkpoints/{CHECKPOINT}.pth"
     checkpoint = torch.load(checkpoint_path, weights_only=True, map_location=torch.device('cpu')) # weights_only=False if it's broken
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
