@@ -33,46 +33,44 @@ final_dist_to_end = 1.0
 checkpoint_dir = "./checkpoints"
 
 ## MAIN
+if PLOTTING:
+    plot_elements = setup_plotting()
+torch.backends.cudnn.benchmark = True
+os.makedirs(checkpoint_dir, exist_ok=True)
+maze_cache = MazeCache(device, BSZ, MAZE_CACHE_SIZE)
+env = GridWorldEnv(device, MAX_STEPS, BSZ, maze_cache)
+agent = BatchedDQNAgent(
+    device,
+    lr=2e-4,
+    gamma=0.99,
+    buffer_capacity=BUFFER_CAPACITY,
+    batch_size=BSZ,
+    update_target_every=UPDATE_TARGET_EVERY,
+)
 
-def main():
-    if PLOTTING:
-        plot_elements = setup_plotting()
-    torch.backends.cudnn.benchmark = True
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    maze_cache = MazeCache(device, BSZ, MAZE_CACHE_SIZE)
-    env = GridWorldEnv(device, MAX_STEPS, BSZ, maze_cache)
-    agent = BatchedDQNAgent(
-        device,
-        lr=2e-4,
-        gamma=0.99,
-        buffer_capacity=BUFFER_CAPACITY,
-        batch_size=BSZ,
-        update_target_every=UPDATE_TARGET_EVERY,
+# Tracking variables
+episode_lengths = []
+all_rewards = []
+all_losses = []
+
+# Warmup phase with vectorized operations
+print("Warming up replay buffer...")
+states = env.reset(initial_difficulty, init_dist_to_end)
+active_envs = torch.ones(BSZ, dtype=torch.bool, device=device)
+
+# Fill buffer with a couple random actions
+for _ in range(MAX_STEPS // 10):
+    actions = torch.randint(0, 4, (BSZ,), device=device)
+    next_states, rewards, dones = env.step(actions, active_envs)
+    agent.push_transitions(
+        states, actions, rewards, next_states, dones, active_envs
     )
+    states = next_states
+    active_envs &= ~dones
 
-    # Tracking variables
-    episode_lengths = []
-    all_rewards = []
-    all_losses = []
+print(f"Starting training with {BSZ} parallel environments, for {NUM_EPISODES} total episodes")
 
-    # Warmup phase with vectorized operations
-    print("Warming up replay buffer...")
-    states = env.reset(initial_difficulty, init_dist_to_end)
-    active_envs = torch.ones(BSZ, dtype=torch.bool, device=device)
-
-    # Fill buffer with a couple random actions
-    for _ in range(MAX_STEPS // 10):
-        actions = torch.randint(0, 4, (BSZ,), device=device)
-        next_states, rewards, dones = env.step(actions, active_envs)
-        agent.push_transitions(
-            states, actions, rewards, next_states, dones, active_envs
-        )
-        states = next_states
-        active_envs &= ~dones
-
-    print(f"Starting training with {BSZ} parallel environments")
-    print(f"Target: {NUM_EPISODES} total episodes")
-
+def train_loop():
     # Keep track of steps per episode for each environment
     env_episode_steps = torch.zeros(BSZ, dtype=torch.int64, device=device)
     env_episode_rewards = torch.zeros(BSZ, device=device)
@@ -284,12 +282,11 @@ def main():
         plt.close()
 
 
-if __name__ == "__main__":
-    import cProfile
+import cProfile
 
-    cProfile.run("main()", "stats")
-    import pstats
+cProfile.run("train_loop()", "stats")
+import pstats
 
-    p = pstats.Stats("stats")
-    p.sort_stats("cumulative").print_stats(20)
+p = pstats.Stats("stats")
+p.sort_stats("cumulative").print_stats(25)
 
