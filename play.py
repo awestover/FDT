@@ -71,7 +71,7 @@ def tensor_to_numpy_grid(tensor):
 
 
 def play_agent(env, agent, ax):
-    state = env.reset(maze_difficulty=0.9, dist_to_end=0.9)
+    state = env.reset(maze_difficulty=0.7, dist_to_end=1.0)
     for i in range(90):
         action = agent.select_actions(state)
         next_state, reward, done = env.step(action)
@@ -94,7 +94,7 @@ if __name__ == '__main__':
     checkpoint_path = f"checkpoints/{CHECKPOINT}.pth"
     checkpoint = torch.load(checkpoint_path, weights_only=True, map_location=torch.device('cpu')) # weights_only=False if it's broken
     agent.policy_net.load_state_dict(checkpoint['model_state_dict'])
-    agent.epsilon = 0.1
+    agent.epsilon = 0.3
     print(f"Checkpoint loaded from {checkpoint_path}")
 
     fig, ax = plt.subplots(figsize=(6, 6))

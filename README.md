@@ -203,3 +203,20 @@ keep an eye on this metric.
 
 if your loss is getting better and you are frequently updating
 target net, then you will win
+
+---
+
+MLP is doing much better than the CNN was
+
+I'm concerned that it might be overfitting 
+idk
+
+
+--- 
+
+another thought: 
+part of the problem might be that the agent doesn't have memory 
+so deterministic strategies can get stuck very easily.
+
+probbaly should have given the agent memory
+
